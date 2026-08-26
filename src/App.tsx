@@ -161,31 +161,46 @@ export default function App() {
     setSyncStatus('SYNCING');
 
     try {
-      let remoteLoaded = false;
-
       // 1. Supabase Cloud Sync
       if (isSupabaseConfigured(supabaseConfig)) {
-        // Push local sessions first so remote has the latest
-        for (const s of sessions) {
+        // First fetch latest remote sessions to merge and avoid overwriting newer changes
+        const remoteSessions = await fetchSupabaseSessions();
+        let currentSessions = sessions;
+
+        if (remoteSessions && remoteSessions.length > 0) {
+          const map = new Map<string, SessionInfo>();
+          // Remote first
+          remoteSessions.forEach((s) => map.set(s.id, s));
+          // Local sessions: merge or keep newest/most complete
+          currentSessions.forEach((local) => {
+            const remote = map.get(local.id);
+            if (!remote) {
+              map.set(local.id, local);
+            } else {
+              // Merge roster: include all unique names
+              const mergedRoster = Array.from(new Set([...(remote.roster || []), ...(local.roster || [])]));
+              map.set(local.id, {
+                ...remote,
+                ...local,
+                roster: mergedRoster,
+              });
+            }
+          });
+
+          const merged = Array.from(map.values());
+          currentSessions = merged;
+          setSessions(merged);
+          saveStoredSessions(merged);
+        }
+
+        // Push all current/merged sessions to remote so Supabase has full data
+        for (const s of currentSessions) {
           await upsertSessionToSupabase(s);
         }
 
         // Push local responses
         if (responses.length > 0) {
           await batchSyncResponsesToSupabase(responses);
-        }
-
-        // Fetch remote sessions
-        const remoteSessions = await fetchSupabaseSessions();
-        if (remoteSessions && remoteSessions.length > 0) {
-          setSessions((prev) => {
-            const map = new Map<string, SessionInfo>();
-            prev.forEach((s) => map.set(s.id, s));
-            remoteSessions.forEach((s) => map.set(s.id, s));
-            const merged = Array.from(map.values());
-            saveStoredSessions(merged);
-            return merged;
-          });
         }
 
         // Fetch remote responses
@@ -202,18 +217,12 @@ export default function App() {
             return merged;
           });
         }
-
-        remoteLoaded = true;
       }
 
       // 2. Google Sheets Webhook Sync if configured
       if (sheetsConfig.webhookUrl && responses.length > 0) {
         await syncBatchToGoogleSheets(responses, sheetsConfig);
       }
-
-      // Save latest state locally
-      saveStoredSessions(sessions);
-      saveStoredResponses(responses);
 
       // Visual success indication
       markSyncSuccess();

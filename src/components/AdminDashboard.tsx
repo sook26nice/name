@@ -100,7 +100,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Search & Filter state for Matrix Tab
   const [matrixSearch, setMatrixSearch] = useState('');
-  const [matrixStatusFilter, setMatrixStatusFilter] = useState<'ALL' | 'COMPLETED' | 'BEFORE_ONLY' | 'NOT_STARTED'>('ALL');
+  const [matrixStatusFilter, setMatrixStatusFilter] = useState<'ALL' | 'COMPLETED' | 'BEFORE_ONLY' | 'AFTER_ONLY' | 'NOT_STARTED'>('ALL');
 
   // Session Editor State
   const [isCreatingSession, setIsCreatingSession] = useState(false);
@@ -745,6 +745,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 >
                   수업전만 ({matchedRecords.filter((r) => r.status === 'BEFORE_ONLY').length})
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setMatrixStatusFilter('AFTER_ONLY')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${
+                    matrixStatusFilter === 'AFTER_ONLY'
+                      ? 'bg-white text-[#3D3A35] shadow-xs font-bold'
+                      : 'text-[#8C867E] hover:text-[#3D3A35]'
+                  }`}
+                >
+                  수업후만 ({matchedRecords.filter((r) => r.status === 'AFTER_ONLY').length})
+                </button>
               </div>
             </div>
 
@@ -785,6 +796,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       ) : status === 'BEFORE_ONLY' ? (
                         <span className="text-[11px] font-sans font-bold bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] px-2.5 py-0.5 rounded-full">
                           수업 전만 작성
+                        </span>
+                      ) : status === 'AFTER_ONLY' ? (
+                        <span className="text-[11px] font-sans font-bold bg-[#F0EFEB] text-[#2D2A26] border border-[#D5CEC5] px-2.5 py-0.5 rounded-full">
+                          수업 후만 작성
                         </span>
                       ) : (
                         <span className="text-[11px] font-sans font-normal bg-[#FAF9F7] text-[#8C867E] border border-[#EBE7E1] px-2.5 py-0.5 rounded-full">
@@ -945,15 +960,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </p>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2 p-4 bg-[#FAF9F7] rounded-xl border border-[#EBE7E1] max-h-48 overflow-y-auto">
-                {activeSession.roster.map((name) => (
-                  <span
-                    key={name}
-                    className="text-xs font-sans bg-white text-[#3D3A35] font-bold px-3 py-1.5 rounded-lg border border-[#EBE7E1] shadow-2xs"
-                  >
-                    {name}
-                  </span>
-                ))}
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2 p-4 bg-[#FAF9F7] rounded-xl border border-[#EBE7E1] max-h-48 overflow-y-auto">
+                  {Array.from(new Set([...(activeSession.roster || []), ...responses.filter(r => r.sessionId === activeSession.id).map(r => r.studentName)])).map((name) => {
+                    const isRegistered = (activeSession.roster || []).includes(name);
+                    return (
+                      <span
+                        key={name}
+                        className={`text-xs font-sans font-bold px-3 py-1.5 rounded-lg border shadow-2xs flex items-center gap-1.5 ${
+                          isRegistered
+                            ? 'bg-white text-[#3D3A35] border-[#EBE7E1]'
+                            : 'bg-[#FFF1ED] text-[#E87A5D] border-[#E87A5D]/30'
+                        }`}
+                      >
+                        <span>{name}</span>
+                        {!isRegistered && (
+                          <span className="text-[9px] bg-[#E87A5D] text-white px-1.5 py-0.2 rounded-full">
+                            직접입력
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })}
+                  {activeSession.roster?.length === 0 && responses.filter(r => r.sessionId === activeSession.id).length === 0 && (
+                    <p className="text-xs text-[#8C867E]">등록된 명단이 없습니다. '명단 일괄 수정'을 클릭해 명단을 추가해 주세요.</p>
+                  )}
+                </div>
               </div>
             )}
           </div>

@@ -56,14 +56,22 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   const [customNameInput, setCustomNameInput] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
 
-  // Filtered student roster
+  // Filtered student roster (including registered roster + any students who submitted BEFORE or AFTER responses)
   const filteredRoster = useMemo(() => {
     const roster = activeSession.roster || [];
-    if (!searchQuery.trim()) return roster;
-    return roster.filter((name) =>
+    // Collect all participant names who submitted a response for this session (BEFORE or AFTER)
+    const sessionResponders = responses
+      .filter((r) => r.sessionId === activeSession.id)
+      .map((r) => r.studentName);
+    
+    // Union of official roster and all responders
+    const allNames = Array.from(new Set([...roster, ...sessionResponders]));
+
+    if (!searchQuery.trim()) return allNames;
+    return allNames.filter((name) =>
       name.toLowerCase().includes(searchQuery.trim().toLowerCase())
     );
-  }, [activeSession.roster, searchQuery]);
+  }, [activeSession.roster, activeSession.id, responses, searchQuery]);
 
   // Check responses for currently selected student in active session
   const studentBeforeResponse = useMemo(() => {
@@ -305,6 +313,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     title="수업 전 기록 완료"
                     className="w-2 h-2 rounded-full bg-[#E87A5D]"
                   />
+                ) : hasAfter ? (
+                  <span
+                    title="수업 후 소감 완료"
+                    className="w-2 h-2 rounded-full bg-[#3D3A35]"
+                  />
                 ) : null}
               </button>
             );
@@ -492,7 +505,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             Active Participants
           </p>
           <p className="text-xl sm:text-2xl font-serif font-bold text-[#2D2A26]">
-            {responses.filter(r => r.sessionId === activeSession.id && r.type === 'BEFORE').length} / {activeSession.roster?.length || 0} 명
+            {new Set(responses.filter(r => r.sessionId === activeSession.id).map(r => r.studentName)).size} / {Math.max(activeSession.roster?.length || 0, new Set(responses.filter(r => r.sessionId === activeSession.id).map(r => r.studentName)).size)} 명 참여
           </p>
         </div>
         <div className="text-right">
