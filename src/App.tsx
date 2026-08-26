@@ -44,6 +44,7 @@ import {
   isSupabaseConfigured,
 } from './utils/supabaseClient';
 import { SyncStatus } from './components/SyncButton';
+import { parseUrlSessionData } from './utils/shareUtils';
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>(getStoredSessions);
@@ -223,6 +224,65 @@ export default function App() {
   }, [supabaseConfig, sheetsConfig, sessions, responses, markSyncSuccess, markSyncError]);
 
   const handleTriggerSupabaseSync = handleManualSync;
+
+  // On App Mount: Check if opened via QR Code / Shared Link URL parameters
+  useEffect(() => {
+    const urlData = parseUrlSessionData();
+    if (!urlData.hasParams) return;
+
+    // 1. Configure Supabase if credentials are provided in QR URL
+    if (urlData.supabaseConfig) {
+      setSupabaseConfig(urlData.supabaseConfig);
+      saveStoredSupabaseConfig(urlData.supabaseConfig);
+    }
+
+    // 2. Load or register active session from URL params
+    if (urlData.sessionId) {
+      setSessions((prev) => {
+        const found = prev.find((s) => s.id === urlData.sessionId);
+        if (found) {
+          // If URL has updated title or roster, update it
+          if (urlData.sessionTitle || urlData.roster) {
+            const updated = prev.map((s) =>
+              s.id === urlData.sessionId
+                ? {
+                    ...s,
+                    title: urlData.sessionTitle || s.title,
+                    date: urlData.sessionDate || s.date,
+                    instructor: urlData.sessionInstructor ?? s.instructor,
+                    roster: urlData.roster && urlData.roster.length > 0 ? urlData.roster : s.roster,
+                  }
+                : s
+            );
+            saveStoredSessions(updated);
+            return updated;
+          }
+          return prev;
+        } else {
+          // New session created from shared QR Link
+          const newSession: SessionInfo = {
+            id: urlData.sessionId!,
+            title: urlData.sessionTitle || '마음 출석부 연수',
+            date: urlData.sessionDate || new Date().toISOString().split('T')[0],
+            instructor: urlData.sessionInstructor,
+            roster: urlData.roster || [],
+            createdAt: new Date().toISOString(),
+          };
+          const next = [newSession, ...prev];
+          saveStoredSessions(next);
+          return next;
+        }
+      });
+
+      setActiveId(urlData.sessionId);
+      setActiveSessionId(urlData.sessionId);
+    }
+
+    // 3. Set view to Student Home
+    if (urlData.targetView) {
+      setCurrentView(urlData.targetView);
+    }
+  }, []);
 
   // Realtime subscription and initial load from Supabase
   useEffect(() => {

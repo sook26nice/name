@@ -22,17 +22,17 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
     if (!text) return;
     setIsError(false);
 
-    // Generate to Canvas
+    // Generate to Canvas with High Contrast and Proper Quiet Zone Margin
     if (canvasRef.current) {
       QRCode.toCanvas(
         canvasRef.current,
         text,
         {
           width: size,
-          margin: 2,
+          margin: 4, // 4-module quiet zone is critical for smartphone camera detection
           color: {
-            dark: '#2D2A26',
-            light: '#FFFFFF',
+            dark: '#000000', // Pure black for 100% optical contrast
+            light: '#FFFFFF', // Pure white background
           },
           errorCorrectionLevel: 'M',
         },
@@ -45,17 +45,17 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
       );
     }
 
-    // Generate DataURL for download or image fallback
+    // Generate High-Res DataURL for download or image display
     QRCode.toDataURL(
       text,
       {
-        width: 500,
-        margin: 2,
+        width: 600,
+        margin: 4,
         color: {
-          dark: '#2D2A26',
+          dark: '#000000',
           light: '#FFFFFF',
         },
-        errorCorrectionLevel: 'H',
+        errorCorrectionLevel: 'M',
       },
       (error, url) => {
         if (!error && url) {
@@ -68,24 +68,26 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
     );
   }, [text, size, onGenerated]);
 
-  // Fallback to online API if canvas has an unexpected glitch
+  // Fallback to online QR service if local canvas has any unexpected issues
   const apiFallbackUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(
     text
-  )}&margin=10&color=2D2A26`;
+  )}&margin=12&color=000000&bgcolor=FFFFFF`;
 
   return (
-    <div className={`relative flex items-center justify-center ${className}`}>
+    <div
+      className={`relative flex items-center justify-center p-3 bg-white rounded-2xl shadow-sm border border-neutral-200 ${className}`}
+    >
       {!isError ? (
         <canvas
           ref={canvasRef}
-          className="rounded-xl shadow-inner max-w-full h-auto object-contain"
+          className="rounded-lg max-w-full h-auto object-contain block mx-auto"
           style={{ width: `${size}px`, height: `${size}px` }}
         />
       ) : (
         <img
           src={apiFallbackUrl}
           alt="QR Code"
-          className="rounded-xl shadow-inner max-w-full h-auto object-contain"
+          className="rounded-lg max-w-full h-auto object-contain block mx-auto"
           style={{ width: `${size}px`, height: `${size}px` }}
         />
       )}

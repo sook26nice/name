@@ -453,7 +453,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
 
   // Export CSV
   const handleExportCsv = () => {
-    const csvContent = exportResponsesToCsv(responses, activeSession);
+    const csvContent = exportResponsesToCsv(activeSession, responses);
     const fileName = `마음출석부_${activeSession.title.replace(/\s+/g, '_')}_${activeSession.date}.csv`;
     downloadFile(csvContent, fileName, 'text/csv;charset=utf-8;');
   };

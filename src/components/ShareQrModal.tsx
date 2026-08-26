@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   QrCode,
   Share2,
@@ -6,18 +6,24 @@ import {
   Check,
   X,
   ExternalLink,
+  MessageSquare,
+  Sparkles,
+  Download,
   Users,
   Sun,
   Moon,
-  Sparkles,
   ArrowRight,
-  Download,
-  Smartphone,
-  Send,
-  MessageSquare,
+  Globe,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { SessionInfo, EmotionResponse } from '../types';
 import { QRCodeDisplay } from './QRCodeDisplay';
+import {
+  getPublicShareUrl,
+  getStoredCustomShareUrl,
+  saveStoredCustomShareUrl,
+} from '../utils/shareUtils';
 
 interface ShareQrModalProps {
   isOpen: boolean;
@@ -38,10 +44,15 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
   const [copiedMessage, setCopiedMessage] = useState(false);
   const [activeTab, setActiveTab] = useState<'QR' | 'LINK'>('QR');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [isLargeSize, setIsLargeSize] = useState(false);
+  const [showUrlSetting, setShowUrlSetting] = useState(false);
+  const [customUrlInput, setCustomUrlInput] = useState(getStoredCustomShareUrl);
+
+  const currentUrl = useMemo(() => {
+    return getPublicShareUrl(activeSession, { customBaseUrl: customUrlInput });
+  }, [activeSession, customUrlInput]);
 
   if (!isOpen) return null;
-
-  const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
 
   // Calculate live stats
   const sessionResponses = responses.filter((r) => r.sessionId === activeSession.id);
@@ -69,6 +80,17 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
     setTimeout(() => setCopiedMessage(false), 2000);
   };
 
+  const handleSaveCustomUrl = () => {
+    saveStoredCustomShareUrl(customUrlInput);
+    setShowUrlSetting(false);
+  };
+
+  const handleResetToAutoUrl = () => {
+    setCustomUrlInput('');
+    saveStoredCustomShareUrl('');
+    setShowUrlSetting(false);
+  };
+
   // Web Share API fallback
   const handleWebShare = async () => {
     if (navigator.share) {
@@ -86,7 +108,7 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
     }
   };
 
-  // Download QR Code Image (Offline-first from canvas dataURL)
+  // Download QR Code Image
   const handleDownloadQr = () => {
     if (qrDataUrl) {
       const a = document.createElement('a');
@@ -96,19 +118,22 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
       a.click();
       document.body.removeChild(a);
     } else {
-      // Fallback
       window.open(
         `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
           currentUrl
-        )}&margin=10&color=2D2A26`,
+        )}&margin=12&color=000000`,
         '_blank'
       );
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#2D2A26]/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-white w-full max-w-xl max-h-[92vh] rounded-3xl border border-[#EBE7E1] shadow-2xl flex flex-col overflow-hidden text-[#3D3A35]">
+    <div className="fixed inset-0 z-50 bg-[#2D2A26]/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200 overflow-y-auto">
+      <div
+        className={`bg-white w-full ${
+          isLargeSize ? 'max-w-2xl' : 'max-w-xl'
+        } max-h-[94vh] rounded-3xl border border-[#EBE7E1] shadow-2xl flex flex-col overflow-hidden text-[#3D3A35] my-auto`}
+      >
         {/* Modal Header */}
         <div className="px-6 py-4 sm:py-5 border-b border-[#EBE7E1] bg-[#FAF9F7] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -130,14 +155,24 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 text-[#8C867E] hover:text-[#2D2A26] hover:bg-[#F5EFE6] rounded-full transition-colors cursor-pointer"
-            title="닫기"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setIsLargeSize(!isLargeSize)}
+              className="p-2 text-[#8C867E] hover:text-[#2D2A26] hover:bg-[#F5EFE6] rounded-full transition-colors cursor-pointer"
+              title={isLargeSize ? '기본 크기로 축소' : '대형 QR 화면'}
+            >
+              {isLargeSize ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 text-[#8C867E] hover:text-[#2D2A26] hover:bg-[#F5EFE6] rounded-full transition-colors cursor-pointer"
+              title="닫기"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Toggle: QR View vs Link/Text Share */}
@@ -152,7 +187,7 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
             }`}
           >
             <QrCode className="w-4 h-4" />
-            <span>대형 QR 코드 스캔</span>
+            <span>고선명 QR 코드 스캔</span>
           </button>
 
           <button
@@ -173,7 +208,7 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
           {/* TAB 1: QR CODE */}
           {activeTab === 'QR' && (
-            <div className="space-y-5 text-center">
+            <div className="space-y-4 text-center">
               {/* Session Info Pill */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] text-xs font-sans">
                 <Sparkles className="w-3.5 h-3.5 text-[#E87A5D]" />
@@ -181,32 +216,84 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
                 <span className="text-[#8C867E]">({activeSession.date})</span>
               </div>
 
-              {/* Robust Client-rendered QR Code Component */}
+              {/* High Contrast QR Code Display */}
               <div className="flex flex-col items-center justify-center py-1">
-                <div className="p-4 bg-white rounded-3xl border-4 border-[#3D3A35] shadow-xl relative group flex flex-col items-center">
+                <div className="p-3.5 bg-white rounded-3xl border-4 border-[#2D2A26] shadow-xl relative group flex flex-col items-center">
                   <QRCodeDisplay
                     text={currentUrl}
-                    size={260}
+                    size={isLargeSize ? 330 : 250}
                     onGenerated={(url) => setQrDataUrl(url)}
                   />
-                  <div className="mt-2 text-center">
-                    <span className="text-[11px] font-sans font-bold px-3 py-0.5 rounded-full bg-[#2D2A26] text-white opacity-90 inline-block">
-                      스마트폰 카메라로 비추세요
+                  <div className="mt-1.5 text-center">
+                    <span className="text-[11px] font-sans font-bold px-3 py-0.5 rounded-full bg-[#2D2A26] text-white inline-block shadow-xs">
+                      기본 카메라 앱으로 비추세요
                     </span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 mt-3">
+                <div className="flex items-center justify-center gap-2 mt-3 flex-wrap">
                   <button
                     type="button"
                     onClick={handleDownloadQr}
                     className="px-3.5 py-1.5 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] text-xs font-sans font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
                   >
                     <Download className="w-3.5 h-3.5 text-[#8C867E]" />
-                    <span>QR 이미지 저장 (PNG)</span>
+                    <span>QR 이미지 다운로드</span>
+                  </button>
+
+                  <a
+                    href={currentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] text-xs font-sans font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-[#8C867E]" />
+                    <span>새 탭에서 열기</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowUrlSetting(!showUrlSetting)}
+                    className="px-2.5 py-1.5 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#8C867E] hover:text-[#3D3A35] border border-[#EBE7E1] text-xs font-sans rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                    title="연결 주소 직접 설정"
+                  >
+                    <Globe className="w-3.5 h-3.5" />
+                    <span>주소 설정</span>
                   </button>
                 </div>
               </div>
+
+              {/* Custom URL Setting Drawer */}
+              {showUrlSetting && (
+                <div className="bg-[#FAF9F7] p-3.5 rounded-2xl border border-[#EBE7E1] text-left space-y-2 text-xs">
+                  <div className="font-bold text-[#2D2A26] flex items-center justify-between">
+                    <span>연결 도메인/주소 직접 지정</span>
+                    <button
+                      type="button"
+                      onClick={handleResetToAutoUrl}
+                      className="text-[11px] text-[#E87A5D] hover:underline font-normal cursor-pointer"
+                    >
+                      자동 주소로 초기화
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={customUrlInput}
+                      onChange={(e) => setCustomUrlInput(e.target.value)}
+                      placeholder="예: https://ais-pre-...run.app"
+                      className="flex-1 px-3 py-1.5 bg-white border border-[#EBE7E1] rounded-xl text-xs font-mono text-[#2D2A26] focus:outline-none focus:border-[#E87A5D]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveCustomUrl}
+                      className="px-3 py-1.5 bg-[#2D2A26] text-white font-bold rounded-xl text-xs cursor-pointer hover:bg-black transition-colors"
+                    >
+                      적용
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Realtime Submission Count Status */}
               <div className="grid grid-cols-2 gap-3 bg-[#FAF9F7] rounded-2xl p-3.5 border border-[#EBE7E1] text-left">
