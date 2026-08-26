@@ -51,6 +51,7 @@ import {
 } from '../utils/storage';
 import { GOOGLE_APPS_SCRIPT_CODE } from '../utils/gasTemplate';
 import { Settings } from 'lucide-react';
+import { SyncButton, SyncStatus } from './SyncButton';
 
 interface AdminDashboardProps {
   sessions: SessionInfo[];
@@ -67,6 +68,9 @@ interface AdminDashboardProps {
   onOpenQr: () => void;
   onOpenSettings?: () => void;
   onOpenShareQr?: () => void;
+  syncStatus?: SyncStatus;
+  onManualSync?: () => void | Promise<void>;
+  lastSyncedTime?: Date | null;
 }
 
 type AdminTab = 'OVERVIEW' | 'MATRIX' | 'ROSTER' | 'EMOTIONS' | 'SHEETS';
@@ -86,6 +90,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onOpenQr,
   onOpenSettings,
   onOpenShareQr,
+  syncStatus = 'IDLE',
+  onManualSync,
+  lastSyncedTime,
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('OVERVIEW');
   const [copiedReport, setCopiedReport] = useState(false);
@@ -298,6 +305,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          {/* Manual Sync Button */}
+          {onManualSync && (
+            <SyncButton
+              syncStatus={syncStatus}
+              onSync={onManualSync}
+              lastSyncedTime={lastSyncedTime}
+              variant="full"
+              className="flex-1 sm:flex-none"
+            />
+          )}
+
           {/* Share Link & QR Generator Button */}
           {onOpenShareQr && (
             <button

@@ -21,6 +21,7 @@ import {
   Check,
 } from 'lucide-react';
 import { SessionInfo, EmotionResponse, AppView } from '../types';
+import { SyncButton, SyncStatus } from './SyncButton';
 
 interface StudentHomeProps {
   sessions: SessionInfo[];
@@ -32,6 +33,9 @@ interface StudentHomeProps {
   responses: EmotionResponse[];
   onOpenSettings?: () => void;
   onOpenShareQr?: () => void;
+  syncStatus?: SyncStatus;
+  onManualSync?: () => void | Promise<void>;
+  lastSyncedTime?: Date | null;
 }
 
 export const StudentHome: React.FC<StudentHomeProps> = ({
@@ -44,6 +48,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   responses,
   onOpenSettings,
   onOpenShareQr,
+  syncStatus = 'IDLE',
+  onManualSync,
+  lastSyncedTime,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [customNameInput, setCustomNameInput] = useState('');
@@ -192,6 +199,16 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
           {/* Quick Share / QR Code Action Buttons */}
           <div className="pt-2 border-t border-[#EBE7E1] flex flex-wrap items-center gap-2">
+            {onManualSync && (
+              <SyncButton
+                syncStatus={syncStatus}
+                onSync={onManualSync}
+                lastSyncedTime={lastSyncedTime}
+                variant="full"
+                className="w-full sm:w-auto"
+              />
+            )}
+
             {onOpenShareQr && (
               <button
                 type="button"

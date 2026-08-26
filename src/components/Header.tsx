@@ -10,6 +10,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { AppView, SessionInfo } from '../types';
+import { SyncButton, SyncStatus } from './SyncButton';
 
 interface HeaderProps {
   currentView: AppView;
@@ -20,6 +21,9 @@ interface HeaderProps {
   totalResponsesCount: number;
   onOpenSettings?: () => void;
   onOpenShareQr?: () => void;
+  syncStatus?: SyncStatus;
+  onManualSync?: () => void | Promise<void>;
+  lastSyncedTime?: Date | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -30,6 +34,9 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectSession,
   onOpenSettings,
   onOpenShareQr,
+  syncStatus = 'IDLE',
+  onManualSync,
+  lastSyncedTime,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-[#F8F5F2]/95 backdrop-blur-md border-b border-[#EBE7E1] shadow-[0_1px_3px_rgba(61,58,53,0.05)]">
@@ -82,6 +89,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Navigation Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2 font-sans">
+          {/* Realtime Manual Sync Button */}
+          {onManualSync && (
+            <SyncButton
+              syncStatus={syncStatus}
+              onSync={onManualSync}
+              lastSyncedTime={lastSyncedTime}
+              variant="header"
+            />
+          )}
+
           {/* Settings Modal Button (주관자 설정) */}
           {onOpenSettings && (
             <button

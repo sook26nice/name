@@ -30,6 +30,7 @@ import {
   getStoredCurrentStudent,
   setStoredCurrentStudent,
   syncResponseToGoogleSheets,
+  syncBatchToGoogleSheets,
 } from './utils/storage';
 import {
   getStoredSupabaseConfig,
@@ -42,6 +43,7 @@ import {
   batchSyncResponsesToSupabase,
   isSupabaseConfigured,
 } from './utils/supabaseClient';
+import { SyncStatus } from './components/SyncButton';
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>(getStoredSessions);
@@ -55,6 +57,10 @@ export default function App() {
   const [showQrModal, setShowQrModal] = useState(false);
   const [showShareQrModal, setShowShareQrModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  // Sync State for Visual Status Feedback
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('IDLE');
+  const [lastSyncedTime, setLastSyncedTime] = useState<Date | null>(null);
 
   // Active Session Object
   const activeSession = useMemo(() => {
@@ -71,18 +77,37 @@ export default function App() {
     );
   }, [sessions, activeSessionId]);
 
-  // Persist handlers
-  const handleUpdateSessions = (newSessions: SessionInfo[]) => {
+  // Helper for triggering sync visual feedback
+  const markSyncSuccess = useCallback(() => {
+    setSyncStatus('SUCCESS');
+    setLastSyncedTime(new Date());
+    setTimeout(() => {
+      setSyncStatus((prev) => (prev === 'SUCCESS' ? 'IDLE' : prev));
+    }, 2500);
+  }, []);
+
+  const markSyncError = useCallback(() => {
+    setSyncStatus('ERROR');
+    setTimeout(() => {
+      setSyncStatus((prev) => (prev === 'ERROR' ? 'IDLE' : prev));
+    }, 3000);
+  }, []);
+
+  // Persist handlers with Fast Automatic Sync
+  const handleUpdateSessions = async (newSessions: SessionInfo[]) => {
     setSessions(newSessions);
     saveStoredSessions(newSessions);
 
-    // Sync to Supabase if configured
+    // Fast sync to Supabase if configured
     if (isSupabaseConfigured(supabaseConfig)) {
-      newSessions.forEach((s) => {
-        upsertSessionToSupabase(s).catch((err) =>
-          console.warn('[Supabase] Failed to sync session:', err)
-        );
-      });
+      setSyncStatus('SYNCING');
+      try {
+        await Promise.all(newSessions.map((s) => upsertSessionToSupabase(s)));
+        markSyncSuccess();
+      } catch (err) {
+        console.warn('[Supabase] Failed to fast-sync sessions:', err);
+        markSyncError();
+      }
     }
   };
 
@@ -96,9 +121,23 @@ export default function App() {
     saveStoredEmotions(newDict);
   };
 
-  const handleUpdateResponses = (newResponses: EmotionResponse[]) => {
+  const handleUpdateResponses = async (newResponses: EmotionResponse[]) => {
     setResponses(newResponses);
     saveStoredResponses(newResponses);
+
+    // Fast sync to Supabase if configured
+    if (isSupabaseConfigured(supabaseConfig)) {
+      setSyncStatus('SYNCING');
+      try {
+        if (newResponses.length > 0) {
+          await batchSyncResponsesToSupabase(newResponses);
+        }
+        markSyncSuccess();
+      } catch (err) {
+        console.warn('[Supabase] Failed to fast-sync responses:', err);
+        markSyncError();
+      }
+    }
   };
 
   const handleUpdateSheetsConfig = (newConfig: GoogleSheetsConfig) => {
@@ -116,48 +155,74 @@ export default function App() {
     setStoredCurrentStudent(name);
   };
 
-  // Full Cloud Sync Trigger
-  const handleTriggerSupabaseSync = useCallback(async () => {
-    if (!isSupabaseConfigured(supabaseConfig)) return;
+  // Full Cloud Sync Trigger / Manual Sync
+  const handleManualSync = useCallback(async () => {
+    setSyncStatus('SYNCING');
 
     try {
-      // 1. Fetch remote sessions
-      const remoteSessions = await fetchSupabaseSessions();
-      if (remoteSessions && remoteSessions.length > 0) {
-        setSessions((prev) => {
-          const map = new Map<string, SessionInfo>();
-          prev.forEach((s) => map.set(s.id, s));
-          remoteSessions.forEach((s) => map.set(s.id, s));
-          const merged = Array.from(map.values());
-          saveStoredSessions(merged);
-          return merged;
-        });
-      } else if (sessions.length > 0) {
-        // Seed remote with local sessions if remote is empty
-        sessions.forEach((s) => upsertSessionToSupabase(s));
+      let remoteLoaded = false;
+
+      // 1. Supabase Cloud Sync
+      if (isSupabaseConfigured(supabaseConfig)) {
+        // Push local sessions first so remote has the latest
+        for (const s of sessions) {
+          await upsertSessionToSupabase(s);
+        }
+
+        // Push local responses
+        if (responses.length > 0) {
+          await batchSyncResponsesToSupabase(responses);
+        }
+
+        // Fetch remote sessions
+        const remoteSessions = await fetchSupabaseSessions();
+        if (remoteSessions && remoteSessions.length > 0) {
+          setSessions((prev) => {
+            const map = new Map<string, SessionInfo>();
+            prev.forEach((s) => map.set(s.id, s));
+            remoteSessions.forEach((s) => map.set(s.id, s));
+            const merged = Array.from(map.values());
+            saveStoredSessions(merged);
+            return merged;
+          });
+        }
+
+        // Fetch remote responses
+        const remoteResponses = await fetchSupabaseResponses();
+        if (remoteResponses && remoteResponses.length > 0) {
+          setResponses((prev) => {
+            const map = new Map<string, EmotionResponse>();
+            prev.forEach((r) => map.set(r.id, r));
+            remoteResponses.forEach((r) => map.set(r.id, r));
+            const merged = Array.from(map.values()).sort(
+              (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            );
+            saveStoredResponses(merged);
+            return merged;
+          });
+        }
+
+        remoteLoaded = true;
       }
 
-      // 2. Fetch remote responses
-      const remoteResponses = await fetchSupabaseResponses();
-      if (remoteResponses && remoteResponses.length > 0) {
-        setResponses((prev) => {
-          const map = new Map<string, EmotionResponse>();
-          prev.forEach((r) => map.set(r.id, r));
-          remoteResponses.forEach((r) => map.set(r.id, r));
-          const merged = Array.from(map.values()).sort(
-            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-          );
-          saveStoredResponses(merged);
-          return merged;
-        });
-      } else if (responses.length > 0) {
-        // Seed remote with local responses if remote is empty
-        batchSyncResponsesToSupabase(responses);
+      // 2. Google Sheets Webhook Sync if configured
+      if (sheetsConfig.webhookUrl && responses.length > 0) {
+        await syncBatchToGoogleSheets(responses, sheetsConfig);
       }
+
+      // Save latest state locally
+      saveStoredSessions(sessions);
+      saveStoredResponses(responses);
+
+      // Visual success indication
+      markSyncSuccess();
     } catch (err) {
-      console.warn('[Supabase Sync Trigger] Error:', err);
+      console.warn('[Sync Error]:', err);
+      markSyncError();
     }
-  }, [supabaseConfig, sessions, responses]);
+  }, [supabaseConfig, sheetsConfig, sessions, responses, markSyncSuccess, markSyncError]);
+
+  const handleTriggerSupabaseSync = handleManualSync;
 
   // Realtime subscription and initial load from Supabase
   useEffect(() => {
@@ -178,6 +243,7 @@ export default function App() {
           saveStoredResponses(next);
           return next;
         });
+        markSyncSuccess();
       },
       (incomingSession) => {
         setSessions((prev) => {
@@ -188,6 +254,7 @@ export default function App() {
           saveStoredSessions(next);
           return next;
         });
+        markSyncSuccess();
       }
     );
 
@@ -203,6 +270,7 @@ export default function App() {
     emotion: string;
     comment: string;
   }) => {
+    setSyncStatus('SYNCING');
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const dateStr = activeSession.date || now.toISOString().split('T')[0];
@@ -233,19 +301,25 @@ export default function App() {
     );
 
     const updated = [newResponse, ...otherResponses];
-    handleUpdateResponses(updated);
+    setResponses(updated);
+    saveStoredResponses(updated);
 
-    // Push to Supabase Cloud if configured
-    if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
-      upsertSessionToSupabase(activeSession).catch(() => {});
-      pushResponseToSupabase(newResponse).catch((err) =>
-        console.warn('[Supabase Sync Error]', err)
-      );
-    }
+    try {
+      // Push to Supabase Cloud if configured
+      if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
+        upsertSessionToSupabase(activeSession).catch(() => {});
+        await pushResponseToSupabase(newResponse);
+      }
 
-    // Sync to Google Sheets if configured
-    if (sheetsConfig.autoSync && sheetsConfig.webhookUrl) {
-      syncResponseToGoogleSheets(newResponse, sheetsConfig);
+      // Sync to Google Sheets if configured
+      if (sheetsConfig.autoSync && sheetsConfig.webhookUrl) {
+        syncResponseToGoogleSheets(newResponse, sheetsConfig);
+      }
+
+      markSyncSuccess();
+    } catch (e) {
+      console.warn('Submit before sync error:', e);
+      markSyncSuccess(); // Local save succeeded
     }
   };
 
@@ -256,6 +330,7 @@ export default function App() {
     emotion: string;
     comment: string;
   }) => {
+    setSyncStatus('SYNCING');
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const dateStr = activeSession.date || now.toISOString().split('T')[0];
@@ -286,19 +361,25 @@ export default function App() {
     );
 
     const updated = [newResponse, ...otherResponses];
-    handleUpdateResponses(updated);
+    setResponses(updated);
+    saveStoredResponses(updated);
 
-    // Push to Supabase Cloud if configured
-    if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
-      upsertSessionToSupabase(activeSession).catch(() => {});
-      pushResponseToSupabase(newResponse).catch((err) =>
-        console.warn('[Supabase Sync Error]', err)
-      );
-    }
+    try {
+      // Push to Supabase Cloud if configured
+      if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
+        upsertSessionToSupabase(activeSession).catch(() => {});
+        await pushResponseToSupabase(newResponse);
+      }
 
-    // Sync to Google Sheets if configured
-    if (sheetsConfig.autoSync && sheetsConfig.webhookUrl) {
-      syncResponseToGoogleSheets(newResponse, sheetsConfig);
+      // Sync to Google Sheets if configured
+      if (sheetsConfig.autoSync && sheetsConfig.webhookUrl) {
+        syncResponseToGoogleSheets(newResponse, sheetsConfig);
+      }
+
+      markSyncSuccess();
+    } catch (e) {
+      console.warn('Submit after sync error:', e);
+      markSyncSuccess(); // Local save succeeded
     }
   };
 
@@ -335,6 +416,9 @@ export default function App() {
         totalResponsesCount={responses.length}
         onOpenSettings={() => setShowSettingsModal(true)}
         onOpenShareQr={() => setShowShareQrModal(true)}
+        syncStatus={syncStatus}
+        onManualSync={handleManualSync}
+        lastSyncedTime={lastSyncedTime}
       />
 
       {/* Main Content Area */}
@@ -353,6 +437,9 @@ export default function App() {
             responses={responses}
             onOpenSettings={() => setShowSettingsModal(true)}
             onOpenShareQr={() => setShowShareQrModal(true)}
+            syncStatus={syncStatus}
+            onManualSync={handleManualSync}
+            lastSyncedTime={lastSyncedTime}
           />
         )}
 
@@ -395,6 +482,9 @@ export default function App() {
             onOpenQr={() => setShowQrModal(true)}
             onOpenSettings={() => setShowSettingsModal(true)}
             onOpenShareQr={() => setShowShareQrModal(true)}
+            syncStatus={syncStatus}
+            onManualSync={handleManualSync}
+            lastSyncedTime={lastSyncedTime}
           />
         )}
       </main>
