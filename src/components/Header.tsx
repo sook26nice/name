@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Sparkles,
   Settings,
+  Share2,
 } from 'lucide-react';
 import { AppView, SessionInfo } from '../types';
 
@@ -18,6 +19,7 @@ interface HeaderProps {
   onSelectSession: (sessionId: string) => void;
   totalResponsesCount: number;
   onOpenSettings?: () => void;
+  onOpenShareQr?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeSession,
   onSelectSession,
   onOpenSettings,
+  onOpenShareQr,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-[#F8F5F2]/95 backdrop-blur-md border-b border-[#EBE7E1] shadow-[0_1px_3px_rgba(61,58,53,0.05)]">
@@ -86,10 +89,24 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenSettings}
               title="연수 정보 및 명단 설정창"
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold text-[#E87A5D] bg-[#FFF1ED] hover:bg-[#FFE5DE] border border-[#E87A5D]/30 transition-all shadow-2xs"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold text-[#E87A5D] bg-[#FFF1ED] hover:bg-[#FFE5DE] border border-[#E87A5D]/30 transition-all shadow-2xs cursor-pointer"
             >
               <Settings className="w-4 h-4 text-[#E87A5D]" />
               <span className="hidden xs:inline">연수 설정</span>
+            </button>
+          )}
+
+          {/* Share Link & QR Generator Button */}
+          {onOpenShareQr && (
+            <button
+              id="nav-btn-share-link"
+              type="button"
+              onClick={onOpenShareQr}
+              title="연수생·학생 접속 링크 및 QR코드 공유"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold text-[#3D3A35] bg-[#F5EFE6] hover:bg-[#EBE7E1] border border-[#EBE7E1] transition-all shadow-2xs cursor-pointer"
+            >
+              <Share2 className="w-4 h-4 text-[#E87A5D]" />
+              <span className="hidden sm:inline">접속 공유·QR</span>
             </button>
           )}
 

@@ -5,6 +5,7 @@ import { BeforeStep } from './components/BeforeStep';
 import { AfterStep } from './components/AfterStep';
 import { AdminDashboard } from './components/AdminDashboard';
 import { QrModal } from './components/QrModal';
+import { ShareQrModal } from './components/ShareQrModal';
 import { TrainingSettingsModal } from './components/TrainingSettingsModal';
 import {
   AppView,
@@ -39,6 +40,7 @@ export default function App() {
   const [selectedStudent, setSelectedStudent] = useState<string>(getStoredCurrentStudent);
   const [currentView, setCurrentView] = useState<AppView>('STUDENT_HOME');
   const [showQrModal, setShowQrModal] = useState(false);
+  const [showShareQrModal, setShowShareQrModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // Active Session Object
@@ -206,6 +208,7 @@ export default function App() {
         onSelectSession={handleSelectSession}
         totalResponsesCount={responses.length}
         onOpenSettings={() => setShowSettingsModal(true)}
+        onOpenShareQr={() => setShowShareQrModal(true)}
       />
 
       {/* Main Content Area */}
@@ -223,6 +226,7 @@ export default function App() {
             }}
             responses={responses}
             onOpenSettings={() => setShowSettingsModal(true)}
+            onOpenShareQr={() => setShowShareQrModal(true)}
           />
         )}
 
@@ -264,6 +268,7 @@ export default function App() {
             onBackToHome={() => setCurrentView('STUDENT_HOME')}
             onOpenQr={() => setShowQrModal(true)}
             onOpenSettings={() => setShowSettingsModal(true)}
+            onOpenShareQr={() => setShowShareQrModal(true)}
           />
         )}
       </main>
@@ -276,6 +281,21 @@ export default function App() {
         activeSession={activeSession}
         onSelectSession={handleSelectSession}
         onUpdateSessions={handleUpdateSessions}
+        sheetsConfig={sheetsConfig}
+        onUpdateSheetsConfig={handleUpdateSheetsConfig}
+        responses={responses}
+      />
+
+      {/* Quick Share & QR Code Modal */}
+      <ShareQrModal
+        isOpen={showShareQrModal}
+        onClose={() => setShowShareQrModal(false)}
+        activeSession={activeSession}
+        responses={responses}
+        onGoToStudentHome={() => {
+          setShowShareQrModal(false);
+          setCurrentView('STUDENT_HOME');
+        }}
       />
 
       {/* Presenter Mode QR Modal */}

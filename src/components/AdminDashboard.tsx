@@ -30,6 +30,8 @@ import {
   ShieldCheck,
   Sliders,
   Send,
+  Share2,
+  QrCode,
 } from 'lucide-react';
 import {
   SessionInfo,
@@ -64,6 +66,7 @@ interface AdminDashboardProps {
   onBackToHome: () => void;
   onOpenQr: () => void;
   onOpenSettings?: () => void;
+  onOpenShareQr?: () => void;
 }
 
 type AdminTab = 'OVERVIEW' | 'MATRIX' | 'ROSTER' | 'EMOTIONS' | 'SHEETS';
@@ -82,6 +85,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToHome,
   onOpenQr,
   onOpenSettings,
+  onOpenShareQr,
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('OVERVIEW');
   const [copiedReport, setCopiedReport] = useState(false);
@@ -294,13 +298,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          {/* Share Link & QR Generator Button */}
+          {onOpenShareQr && (
+            <button
+              id="admin-btn-share-link"
+              type="button"
+              onClick={onOpenShareQr}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] font-sans font-bold text-xs sm:text-sm rounded-xl shadow-2xs transition-all cursor-pointer"
+            >
+              <Share2 className="w-4 h-4 text-[#E87A5D]" />
+              <span>접속링크 공유 & QR</span>
+            </button>
+          )}
+
           {/* Settings Modal Button */}
           {onOpenSettings && (
             <button
               id="admin-btn-open-settings"
               type="button"
               onClick={onOpenSettings}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#FFF1ED] hover:bg-[#FFE5DE] text-[#E87A5D] border border-[#E87A5D]/30 font-sans font-bold text-xs sm:text-sm rounded-xl shadow-2xs transition-all"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#FFF1ED] hover:bg-[#FFE5DE] text-[#E87A5D] border border-[#E87A5D]/30 font-sans font-bold text-xs sm:text-sm rounded-xl shadow-2xs transition-all cursor-pointer"
             >
               <Settings className="w-4 h-4 text-[#E87A5D]" />
               <span>연수 설정 및 명단 수정</span>
@@ -312,7 +329,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             id="admin-btn-open-qr"
             type="button"
             onClick={onOpenQr}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-[#E87A5D]/20 transition-all"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-[#E87A5D]/20 transition-all cursor-pointer"
           >
             <Sparkles className="w-4 h-4" />
             <span>수업 QR 띄우기</span>
@@ -323,7 +340,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             id="admin-btn-export-csv"
             type="button"
             onClick={handleExportCsv}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#F5EFE6] hover:bg-[#EBE7E1] text-[#3D3A35] font-sans font-bold text-xs sm:text-sm rounded-xl border border-[#EBE7E1] transition-all"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#F5EFE6] hover:bg-[#EBE7E1] text-[#3D3A35] font-sans font-bold text-xs sm:text-sm rounded-xl border border-[#EBE7E1] transition-all cursor-pointer"
           >
             <Download className="w-4 h-4 text-[#8C867E]" />
             <span>CSV 저장</span>

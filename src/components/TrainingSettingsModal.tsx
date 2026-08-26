@@ -12,14 +12,22 @@ import {
   Trash2,
   Save,
   Check,
-  RotateCcw,
   Sparkles,
   ArrowUpDown,
   Copy,
   Layers,
-  HelpCircle,
+  Database,
+  ExternalLink,
+  Code,
+  Download,
+  AlertCircle,
+  CheckCircle2,
+  RefreshCw,
+  Send,
 } from 'lucide-react';
-import { SessionInfo } from '../types';
+import { SessionInfo, GoogleSheetsConfig, EmotionResponse } from '../types';
+import { GOOGLE_APPS_SCRIPT_CODE } from '../utils/gasTemplate';
+import { testGoogleSheetsWebhook, syncBatchToGoogleSheets, exportResponsesToCsv, downloadFile } from '../utils/storage';
 
 interface TrainingSettingsModalProps {
   isOpen: boolean;
@@ -28,9 +36,12 @@ interface TrainingSettingsModalProps {
   activeSession: SessionInfo;
   onSelectSession: (sessionId: string) => void;
   onUpdateSessions: (sessions: SessionInfo[]) => void;
+  sheetsConfig: GoogleSheetsConfig;
+  onUpdateSheetsConfig: (config: GoogleSheetsConfig) => void;
+  responses: EmotionResponse[];
 }
 
-type SettingsTab = 'INFO' | 'ROSTER' | 'SESSIONS';
+type SettingsTab = 'ROSTER' | 'INFO' | 'SHEETS' | 'SESSIONS';
 
 export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
   isOpen,
@@ -39,6 +50,9 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
   activeSession,
   onSelectSession,
   onUpdateSessions,
+  sheetsConfig,
+  onUpdateSheetsConfig,
+  responses,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('ROSTER');
 
@@ -58,6 +72,13 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
   const [saveFeedback, setSaveFeedback] = useState(false);
   const [copiedFeedback, setCopiedFeedback] = useState(false);
 
+  // Google Sheets Config State
+  const [webhookUrl, setWebhookUrl] = useState(sheetsConfig.webhookUrl || '');
+  const [autoSync, setAutoSync] = useState(sheetsConfig.autoSync ?? true);
+  const [testStatus, setTestStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [batchSyncStatus, setBatchSyncStatus] = useState<'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [copiedGasCode, setCopiedGasCode] = useState(false);
+
   // New Session Creation Form State
   const [newSessionTitle, setNewSessionTitle] = useState('');
   const [newSessionInstructor, setNewSessionInstructor] = useState('');
@@ -76,7 +97,9 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
     setDescription(activeSession.description || '');
     setRoster(activeSession.roster || []);
     setBulkInputText((activeSession.roster || []).join('\n'));
-  }, [activeSession, isOpen]);
+    setWebhookUrl(sheetsConfig.webhookUrl || '');
+    setAutoSync(sheetsConfig.autoSync ?? true);
+  }, [activeSession, sheetsConfig, isOpen]);
 
   if (!isOpen) return null;
 
@@ -114,7 +137,6 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
   // Bulk Apply from textarea
   const handleApplyBulkRoster = () => {
     const parsed = parseNames(bulkInputText);
-    // Deduplicate
     const unique = Array.from(new Set(parsed));
     setRoster(unique);
 
@@ -260,6 +282,80 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
     }
   };
 
+  // Save Google Sheets Config
+  const handleSaveSheetsConfig = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const newConfig: GoogleSheetsConfig = {
+      webhookUrl: webhookUrl.trim(),
+      autoSync: autoSync,
+      lastSyncedAt: new Date().toISOString(),
+    };
+    onUpdateSheetsConfig(newConfig);
+    setSaveFeedback(true);
+    setTimeout(() => setSaveFeedback(false), 2000);
+  };
+
+  // Test Webhook Connection
+  const handleTestConnection = async () => {
+    if (!webhookUrl.trim()) {
+      alert('구글 Apps Script 웹 앱 URL을 먼저 입력해주세요.');
+      return;
+    }
+    setTestStatus('TESTING');
+    const success = await testGoogleSheetsWebhook(webhookUrl.trim());
+    if (success) {
+      setTestStatus('SUCCESS');
+      // Also save
+      handleSaveSheetsConfig();
+      setTimeout(() => setTestStatus('IDLE'), 3000);
+    } else {
+      setTestStatus('ERROR');
+      setTimeout(() => setTestStatus('IDLE'), 4000);
+    }
+  };
+
+  // Batch Sync All Responses
+  const handleBatchSync = async () => {
+    if (!webhookUrl.trim()) {
+      alert('구글 Apps Script 웹 앱 URL이 설정되지 않았습니다.');
+      return;
+    }
+    if (responses.length === 0) {
+      alert('현재 전송할 응답 데이터가 없습니다.');
+      return;
+    }
+
+    setBatchSyncStatus('SYNCING');
+    const success = await syncBatchToGoogleSheets(responses, {
+      webhookUrl: webhookUrl.trim(),
+      autoSync: true,
+    });
+
+    if (success) {
+      setBatchSyncStatus('SUCCESS');
+      setTimeout(() => setBatchSyncStatus('IDLE'), 3000);
+    } else {
+      setBatchSyncStatus('ERROR');
+      setTimeout(() => setBatchSyncStatus('IDLE'), 4000);
+    }
+  };
+
+  // Copy GAS Code
+  const handleCopyGasCode = () => {
+    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+    setCopiedGasCode(true);
+    setTimeout(() => setCopiedGasCode(false), 2000);
+  };
+
+  // Export CSV
+  const handleExportCsv = () => {
+    const csvContent = exportResponsesToCsv(responses, activeSession);
+    const fileName = `마음출석부_${activeSession.title.replace(/\s+/g, '_')}_${activeSession.date}.csv`;
+    downloadFile(csvContent, fileName, 'text/csv;charset=utf-8;');
+  };
+
+  const isSheetsConnected = !!sheetsConfig.webhookUrl;
+
   return (
     <div className="fixed inset-0 z-50 bg-[#2D2A26]/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-3xl max-h-[90vh] rounded-3xl border border-[#EBE7E1] shadow-2xl flex flex-col overflow-hidden text-[#3D3A35]">
@@ -277,9 +373,15 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                 <span className="text-[10px] font-sans font-bold px-2.5 py-0.5 rounded-full bg-[#E87A5D] text-white">
                   주관자 전용
                 </span>
+                {isSheetsConnected && (
+                  <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    시트 연동중
+                  </span>
+                )}
               </div>
               <p className="text-xs font-sans text-[#8C867E]">
-                직무연수 내용 변경 및 연수생 명단을 간편하게 등록·수정합니다.
+                연수생 명단 등록, 직무연수 내용 수정 및 구글 스프레드시트 실시간 기록 연동을 설정합니다.
               </p>
             </div>
           </div>
@@ -299,20 +401,20 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('ROSTER')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
               activeTab === 'ROSTER'
                 ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
                 : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>연수생 명단 입력 ({roster.length}명)</span>
+            <span>연수생 명단 ({roster.length}명)</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('INFO')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
               activeTab === 'INFO'
                 ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
                 : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
@@ -324,8 +426,28 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
 
           <button
             type="button"
+            onClick={() => setActiveTab('SHEETS')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
+              activeTab === 'SHEETS'
+                ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
+                : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
+            }`}
+          >
+            <Database className="w-4 h-4" />
+            <span className="flex items-center gap-1.5">
+              구글 시트 자동 기록
+              {isSheetsConnected ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+              )}
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('SESSIONS')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
               activeTab === 'SESSIONS'
                 ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
                 : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
@@ -363,14 +485,14 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                   <button
                     type="button"
                     onClick={() => handleLoadPreset('TEACHERS')}
-                    className="text-[11px] font-sans font-medium px-2.5 py-1 bg-white hover:bg-[#F5EFE6] text-[#3D3A35] rounded-lg border border-[#EBE7E1] transition-all"
+                    className="text-[11px] font-sans font-medium px-2.5 py-1 bg-white hover:bg-[#F5EFE6] text-[#3D3A35] rounded-lg border border-[#EBE7E1] transition-all cursor-pointer"
                   >
                     교원 연수 20인
                   </button>
                   <button
                     type="button"
                     onClick={() => handleLoadPreset('PRIMARY')}
-                    className="text-[11px] font-sans font-medium px-2.5 py-1 bg-white hover:bg-[#F5EFE6] text-[#3D3A35] rounded-lg border border-[#EBE7E1] transition-all"
+                    className="text-[11px] font-sans font-medium px-2.5 py-1 bg-white hover:bg-[#F5EFE6] text-[#3D3A35] rounded-lg border border-[#EBE7E1] transition-all cursor-pointer"
                   >
                     학급 20인
                   </button>
@@ -402,7 +524,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                     <button
                       type="button"
                       onClick={handleApplyBulkRoster}
-                      className="px-4 py-2 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-sm transition-all flex items-center gap-1.5"
+                      className="px-4 py-2 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
                     >
                       <Save className="w-4 h-4" />
                       <span>붙여넣은 명단 일괄 적용하기</span>
@@ -412,7 +534,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                       type="button"
                       onClick={handleSortAlphabetical}
                       disabled={roster.length === 0}
-                      className="px-3 py-2 bg-[#F5EFE6] hover:bg-[#EBE7E1] text-[#3D3A35] font-sans font-bold text-xs rounded-xl border border-[#EBE7E1] transition-all flex items-center gap-1 disabled:opacity-50"
+                      className="px-3 py-2 bg-[#F5EFE6] hover:bg-[#EBE7E1] text-[#3D3A35] font-sans font-bold text-xs rounded-xl border border-[#EBE7E1] transition-all flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                     >
                       <ArrowUpDown className="w-3.5 h-3.5 text-[#8C867E]" />
                       <span>가나다순 정렬</span>
@@ -424,7 +546,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                       type="button"
                       onClick={handleCopyRoster}
                       disabled={roster.length === 0}
-                      className="px-3 py-2 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] font-sans text-xs font-medium rounded-xl border border-[#EBE7E1] transition-all flex items-center gap-1 disabled:opacity-50"
+                      className="px-3 py-2 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] font-sans text-xs font-medium rounded-xl border border-[#EBE7E1] transition-all flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                     >
                       {copiedFeedback ? (
                         <>
@@ -443,7 +565,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                       type="button"
                       onClick={handleClearRoster}
                       disabled={roster.length === 0}
-                      className="px-3 py-2 text-[#8C867E] hover:text-rose-600 hover:bg-rose-50 text-xs font-medium rounded-xl transition-all disabled:opacity-50"
+                      className="px-3 py-2 text-[#8C867E] hover:text-rose-600 hover:bg-rose-50 text-xs font-medium rounded-xl transition-all disabled:opacity-50 cursor-pointer"
                     >
                       전체 비우기
                     </button>
@@ -470,7 +592,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                     <button
                       type="submit"
                       disabled={!singleNameInput.trim()}
-                      className="px-3 py-1.5 bg-[#3D3A35] hover:bg-[#2D2A26] text-white font-sans font-bold text-xs rounded-xl disabled:opacity-40 transition-all flex items-center gap-1"
+                      className="px-3 py-1.5 bg-[#3D3A35] hover:bg-[#2D2A26] text-white font-sans font-bold text-xs rounded-xl disabled:opacity-40 transition-all flex items-center gap-1 cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>추가</span>
@@ -492,7 +614,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleRemoveName(name)}
-                            className="text-[#8C867E] hover:text-rose-600 rounded-full p-0.5 transition-colors"
+                            className="text-[#8C867E] hover:text-rose-600 rounded-full p-0.5 transition-colors cursor-pointer"
                             title={`${name} 삭제`}
                           >
                             <X className="w-3 h-3" />
@@ -521,15 +643,13 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                   <label className="block text-xs font-sans font-bold text-[#3D3A35]">
                     직무연수 과정명 *
                   </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      placeholder="예: 2026 초·중등 교원 AI 에듀테크 활용 역량강화 직무연수"
-                      className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
-                    />
-                  </div>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="예: 2026 초·중등 교원 AI 에듀테크 활용 역량강화 직무연수"
+                    className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                  />
                 </div>
 
                 {/* Subtitle / Topic */}
@@ -630,7 +750,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                 <button
                   type="button"
                   onClick={handleSaveAll}
-                  className="px-5 py-2.5 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-[#E87A5D]/20 transition-all flex items-center gap-1.5"
+                  className="px-5 py-2.5 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-[#E87A5D]/20 transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
                   <span>연수 정보 저장하기</span>
@@ -639,7 +759,274 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 3: ALL SESSIONS (연수 과정 목록 및 신규 개설) */}
+          {/* TAB 3: GOOGLE SHEETS INTEGRATION (구글 시트 자동 기록 연동) */}
+          {activeTab === 'SHEETS' && (
+            <div className="space-y-6">
+              {/* Connection Status Card */}
+              <div
+                className={`p-4 rounded-2xl border flex items-start sm:items-center justify-between gap-3 ${
+                  isSheetsConnected
+                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                    : 'bg-[#FAF9F7] border-[#EBE7E1] text-[#3D3A35]'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                      isSheetsConnected
+                        ? 'bg-emerald-500 text-white shadow-xs'
+                        : 'bg-[#F5EFE6] text-[#8C867E]'
+                    }`}
+                  >
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-serif font-bold text-sm sm:text-base">
+                      {isSheetsConnected
+                        ? '구글 스프레드시트 실시간 기록 활성화'
+                        : '구글 스프레드시트 미연동 (로컬 저장 모드)'}
+                    </h3>
+                    <p className="text-xs font-sans text-[#8C867E] mt-0.5">
+                      {isSheetsConnected
+                        ? '연수생이 출석 및 감정 소감을 제출할 때마다 구글 시트에 행이 실시간 자동 추가됩니다.'
+                        : '연수생들의 제출 데이터가 브라우저에 안전하게 보관되고 있습니다. 아래 3분 가이드로 구글 시트를 연동해보세요.'}
+                    </p>
+                  </div>
+                </div>
+
+                <a
+                  href="https://sheets.new"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-[#F5EFE6] text-[#2D2A26] border border-[#EBE7E1] font-sans font-bold text-xs rounded-xl transition-all shrink-0"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-[#E87A5D]" />
+                  <span>새 구글시트 만들기</span>
+                </a>
+              </div>
+
+              {/* Step by Step Guide Cards */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-sans font-bold text-[#2D2A26] flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#E87A5D]" />
+                    <span>3분 구글 스프레드시트 연동 가이드</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={handleCopyGasCode}
+                    className="inline-flex items-center gap-1 text-xs font-sans font-bold text-[#E87A5D] hover:underline cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copiedGasCode ? '스크립트 코드 복사됨!' : '스크립트 코드 복사'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-sans">
+                  {/* Step 1 */}
+                  <div className="p-3.5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="w-5 h-5 rounded-full bg-[#E87A5D] text-white flex items-center justify-center font-bold text-[10px]">
+                        1
+                      </span>
+                      <a
+                        href="https://sheets.new"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-[#E87A5D] hover:underline flex items-center gap-0.5 font-bold"
+                      >
+                        <span>sheets.new</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                    <p className="font-bold text-[#2D2A26]">새 스프레드시트 생성</p>
+                    <p className="text-[#8C867E] text-[11px] leading-relaxed">
+                      구글 스프레드시트를 열고 상단 메뉴 <strong>[확장 프로그램] → [Apps Script]</strong>를 클릭합니다.
+                    </p>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="p-3.5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="w-5 h-5 rounded-full bg-[#E87A5D] text-white flex items-center justify-center font-bold text-[10px]">
+                        2
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopyGasCode}
+                        className="text-[11px] text-[#E87A5D] hover:underline flex items-center gap-0.5 font-bold cursor-pointer"
+                      >
+                        <span>코드 복사</span>
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <p className="font-bold text-[#2D2A26]">코드 붙여넣기 및 저장</p>
+                    <p className="text-[#8C867E] text-[11px] leading-relaxed">
+                      기존 코드를 지우고 <strong>[스크립트 코드 복사]</strong> 버튼을 눌러 복사한 코드를 그대로 붙여넣습니다.
+                    </p>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="p-3.5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="w-5 h-5 rounded-full bg-[#E87A5D] text-white flex items-center justify-center font-bold text-[10px]">
+                        3
+                      </span>
+                      <span className="text-[10px] text-[#E87A5D] font-bold">Anyone 필수</span>
+                    </div>
+                    <p className="font-bold text-[#2D2A26]">웹 앱 배포 및 URL 입력</p>
+                    <p className="text-[#8C867E] text-[11px] leading-relaxed">
+                      우측 상단 <strong>[배포] → [새 배포]</strong> 클릭 후 액세스 권한을 <strong>[모든 사용자(Anyone)]</strong>로 설정하여 생성된 웹 앱 URL을 아래에 넣습니다.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Webhook Configuration Form */}
+              <form onSubmit={handleSaveSheetsConfig} className="p-5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-4">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-sans font-bold text-[#2D2A26] flex items-center justify-between">
+                    <span>Google Apps Script 웹 앱 URL (Webhook URL)</span>
+                    <span className="text-[11px] font-normal text-[#8C867E]">
+                      형식: https://script.google.com/macros/s/.../exec
+                    </span>
+                  </label>
+                  <input
+                    type="url"
+                    value={webhookUrl}
+                    onChange={(e) => setWebhookUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                    className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-white border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <label className="flex items-center gap-2 text-xs font-sans text-[#3D3A35] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoSync}
+                      onChange={(e) => setAutoSync(e.target.checked)}
+                      className="w-4 h-4 rounded text-[#E87A5D] focus:ring-[#E87A5D] border-[#EBE7E1]"
+                    />
+                    <span className="font-bold">연수생 제출 시 실시간으로 구글 시트에 자동 기록하기</span>
+                  </label>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={!webhookUrl.trim() || testStatus === 'TESTING'}
+                      className="px-3.5 py-2 bg-white hover:bg-[#F5EFE6] text-[#3D3A35] font-sans font-bold text-xs rounded-xl border border-[#EBE7E1] transition-all flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                    >
+                      {testStatus === 'TESTING' ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#E87A5D]" />
+                          <span>연결 테스트 중...</span>
+                        </>
+                      ) : testStatus === 'SUCCESS' ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="text-emerald-700">테스트 성공!</span>
+                        </>
+                      ) : testStatus === 'ERROR' ? (
+                        <>
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                          <span className="text-rose-700">연결 실패 (URL 확인)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-3.5 h-3.5 text-[#E87A5D]" />
+                          <span>연동 테스트</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>URL 저장하기</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Bulk Sync & CSV Export Backup Controls */}
+              <div className="p-4 bg-white rounded-2xl border border-[#EBE7E1] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-sans font-bold text-[#2D2A26]">
+                    데이터 동기화 및 백업 (현재 누적 응답 {responses.length}건)
+                  </h4>
+                  <p className="text-[11px] font-sans text-[#8C867E] mt-0.5">
+                    기존에 브라우저에 저장된 응답 전체를 구글 시트로 한 번에 내보내거나 CSV 파일로 다운로드합니다.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={handleBatchSync}
+                    disabled={!webhookUrl.trim() || responses.length === 0 || batchSyncStatus === 'SYNCING'}
+                    className="px-3.5 py-2 bg-[#FFF1ED] hover:bg-[#FFE5DE] text-[#E87A5D] font-sans font-bold text-xs rounded-xl border border-[#E87A5D]/30 transition-all flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                  >
+                    {batchSyncStatus === 'SYNCING' ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>시트로 전송 중...</span>
+                      </>
+                    ) : batchSyncStatus === 'SUCCESS' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="text-emerald-700">전체 전송 완료!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Database className="w-3.5 h-3.5" />
+                        <span>전체 응답 시트로 일괄 전송</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportCsv}
+                    disabled={responses.length === 0}
+                    className="px-3 py-2 bg-white hover:bg-[#F5EFE6] text-[#3D3A35] font-sans font-medium text-xs rounded-xl border border-[#EBE7E1] transition-all flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#8C867E]" />
+                    <span>CSV 다운로드</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* View Script Code */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-sans font-bold text-[#3D3A35] flex items-center gap-1">
+                    <Code className="w-3.5 h-3.5 text-[#E87A5D]" />
+                    <span>Google Apps Script 연동 소스코드 미리보기</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyGasCode}
+                    className="text-xs font-sans font-bold text-[#E87A5D] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copiedGasCode ? '복사됨!' : '전체 코드 복사'}</span>
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <pre className="p-3.5 bg-[#2D2A26] text-[#FAF9F7] font-mono text-[11px] rounded-2xl overflow-x-auto max-h-48 leading-relaxed selection:bg-[#E87A5D]">
+                    {GOOGLE_APPS_SCRIPT_CODE}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: ALL SESSIONS (연수 과정 목록 및 신규 개설) */}
           {activeTab === 'SESSIONS' && (
             <div className="space-y-6">
               {/* Existing Sessions List */}
@@ -684,7 +1071,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                                 onSelectSession(s.id);
                                 setActiveTab('ROSTER');
                               }}
-                              className="px-3 py-1.5 text-xs font-sans font-bold text-[#E87A5D] bg-white border border-[#EBE7E1] rounded-xl hover:bg-[#FAF9F7]"
+                              className="px-3 py-1.5 text-xs font-sans font-bold text-[#E87A5D] bg-white border border-[#EBE7E1] rounded-xl hover:bg-[#FAF9F7] cursor-pointer"
                             >
                               이 연수 선택
                             </button>
@@ -692,7 +1079,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleDeleteSession(s.id)}
-                            className="p-2 text-[#8C867E] hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                            className="p-2 text-[#8C867E] hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                             title="연수 삭제"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -769,7 +1156,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                     <button
                       type="submit"
                       disabled={!newSessionTitle.trim()}
-                      className="px-4 py-2.5 bg-[#3D3A35] hover:bg-[#2D2A26] text-white font-sans font-bold text-xs sm:text-sm rounded-xl disabled:opacity-40 transition-all flex items-center gap-1.5"
+                      className="px-4 py-2.5 bg-[#3D3A35] hover:bg-[#2D2A26] text-white font-sans font-bold text-xs sm:text-sm rounded-xl disabled:opacity-40 transition-all flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                       <span>새 연수 개설 및 바로 선택</span>
@@ -796,7 +1183,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 bg-[#3D3A35] hover:bg-[#2D2A26] text-white font-sans font-bold text-xs sm:text-sm rounded-xl transition-all"
+              className="px-5 py-2.5 bg-[#3D3A35] hover:bg-[#2D2A26] text-white font-sans font-bold text-xs sm:text-sm rounded-xl transition-all cursor-pointer"
             >
               완료 및 닫기
             </button>

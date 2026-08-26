@@ -93,19 +93,30 @@ export function saveStoredResponses(responses: EmotionResponse[]): void {
 }
 
 // Sheets Config
+export const DEFAULT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwhYP-tffctWkvCwO9cMBIdDWP045_lehOJ1iu9pMrfovbF_FBIYJcRCn33zK9IpsWLNw/exec';
+
 export function getStoredSheetsConfig(): GoogleSheetsConfig {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.SHEETS_CONFIG);
     if (!data) {
       const initial: GoogleSheetsConfig = {
-        webhookUrl: '',
-        autoSync: false,
+        webhookUrl: DEFAULT_WEBHOOK_URL,
+        autoSync: true,
+        lastSyncedAt: new Date().toISOString(),
       };
+      localStorage.setItem(STORAGE_KEYS.SHEETS_CONFIG, JSON.stringify(initial));
       return initial;
     }
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    // If webhookUrl is empty, default to the user's deployed URL
+    if (!parsed.webhookUrl) {
+      parsed.webhookUrl = DEFAULT_WEBHOOK_URL;
+      parsed.autoSync = true;
+      localStorage.setItem(STORAGE_KEYS.SHEETS_CONFIG, JSON.stringify(parsed));
+    }
+    return parsed;
   } catch {
-    return { webhookUrl: '', autoSync: false };
+    return { webhookUrl: DEFAULT_WEBHOOK_URL, autoSync: true, lastSyncedAt: new Date().toISOString() };
   }
 }
 
@@ -153,6 +164,69 @@ export async function syncResponseToGoogleSheets(
     return true;
   } catch (err) {
     console.warn('Failed to sync to Google Sheets:', err);
+    return false;
+  }
+}
+
+// Test Google Sheets Webhook
+export async function testGoogleSheetsWebhook(webhookUrl: string): Promise<boolean> {
+  if (!webhookUrl || !webhookUrl.startsWith('https://script.google.com/macros/s/')) {
+    return false;
+  }
+  try {
+    const payload = {
+      action: 'TEST_CONNECTION',
+      timestamp: new Date().toISOString(),
+    };
+
+    await fetch(webhookUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch (err) {
+    console.warn('Test connection failed:', err);
+    return false;
+  }
+}
+
+// Batch sync all responses to Google Sheets Webhook
+export async function syncBatchToGoogleSheets(
+  responses: EmotionResponse[],
+  config: GoogleSheetsConfig
+): Promise<boolean> {
+  if (!config.webhookUrl || responses.length === 0) return false;
+  try {
+    const payload = {
+      action: 'BATCH_SYNC',
+      responses: responses.map((r) => ({
+        timestamp: r.timestamp,
+        date: r.date,
+        sessionTitle: r.sessionTitle,
+        studentName: r.studentName,
+        type: r.type,
+        categoryKey: r.categoryKey,
+        categoryName: r.categoryName,
+        emotion: r.emotion,
+        comment: r.comment,
+      })),
+    };
+
+    await fetch(config.webhookUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch (err) {
+    console.warn('Batch sync failed:', err);
     return false;
   }
 }

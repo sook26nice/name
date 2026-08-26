@@ -15,6 +15,10 @@ import {
   Layers,
   Settings,
   Users,
+  Share2,
+  QrCode,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { SessionInfo, EmotionResponse, AppView } from '../types';
 
@@ -27,6 +31,7 @@ interface StudentHomeProps {
   onStartStep: (step: 'BEFORE' | 'AFTER') => void;
   responses: EmotionResponse[];
   onOpenSettings?: () => void;
+  onOpenShareQr?: () => void;
 }
 
 export const StudentHome: React.FC<StudentHomeProps> = ({
@@ -38,6 +43,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   onStartStep,
   responses,
   onOpenSettings,
+  onOpenShareQr,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [customNameInput, setCustomNameInput] = useState('');
@@ -183,6 +189,33 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
               )}
             </div>
           )}
+
+          {/* Quick Share / QR Code Action Buttons */}
+          <div className="pt-2 border-t border-[#EBE7E1] flex flex-wrap items-center gap-2">
+            {onOpenShareQr && (
+              <button
+                type="button"
+                id="btn-quick-share-qr"
+                onClick={onOpenShareQr}
+                className="flex-1 py-2 px-3 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] text-xs font-sans font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <Share2 className="w-3.5 h-3.5 text-[#E87A5D]" />
+                <span>접속 링크 공유</span>
+              </button>
+            )}
+
+            {onOpenShareQr && (
+              <button
+                type="button"
+                id="btn-quick-create-qr"
+                onClick={onOpenShareQr}
+                className="flex-1 py-2 px-3 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] text-xs font-sans font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <QrCode className="w-3.5 h-3.5 text-[#3D3A35]" />
+                <span>QR코드 생성·표시</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
