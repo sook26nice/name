@@ -43,6 +43,13 @@ import {
   batchSyncResponsesToSupabase,
   isSupabaseConfigured,
 } from './utils/supabaseClient';
+import {
+  fetchServerData,
+  syncWithServer,
+  apiUpsertSession,
+  apiSubmitResponse,
+  subscribeToRealtimeServer,
+} from './utils/apiSync';
 import { SyncStatus } from './components/SyncButton';
 import { parseUrlSessionData } from './utils/shareUtils';
 
@@ -94,10 +101,101 @@ export default function App() {
     }, 3000);
   }, []);
 
-  // Persist handlers with Fast Automatic Sync
+  // Initial Load from Backend Server & Realtime Live Stream
+  useEffect(() => {
+    // 1. Fetch initial server data to ensure Mobile & PC are synchronized immediately
+    fetchServerData().then((serverData) => {
+      if (serverData) {
+        if (serverData.sessions && serverData.sessions.length > 0) {
+          // Merge server sessions with local storage sessions
+          setSessions((prev) => {
+            const map = new Map<string, SessionInfo>();
+            serverData.sessions.forEach((s) => map.set(s.id, s));
+            prev.forEach((local) => {
+              const remote = map.get(local.id);
+              if (!remote) {
+                map.set(local.id, local);
+              } else {
+                const mergedRoster = Array.from(new Set([...(remote.roster || []), ...(local.roster || [])]));
+                map.set(local.id, {
+                  ...remote,
+                  ...local,
+                  roster: mergedRoster,
+                });
+              }
+            });
+            const merged = Array.from(map.values());
+            saveStoredSessions(merged);
+            return merged;
+          });
+        }
+
+        if (serverData.responses && serverData.responses.length > 0) {
+          setResponses((prev) => {
+            const map = new Map<string, EmotionResponse>();
+            serverData.responses.forEach((r) => map.set(r.id, r));
+            prev.forEach((r) => {
+              if (!map.has(r.id)) map.set(r.id, r);
+            });
+            const merged = Array.from(map.values()).sort(
+              (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            );
+            saveStoredResponses(merged);
+            return merged;
+          });
+        }
+
+        if (serverData.activeSessionId) {
+          setActiveId(serverData.activeSessionId);
+          setActiveSessionId(serverData.activeSessionId);
+        }
+
+        markSyncSuccess();
+      }
+    });
+
+    // 2. Realtime SSE subscription + live multi-device synchronization
+    const unsubscribeServer = subscribeToRealtimeServer((incoming) => {
+      if (incoming.sessions) {
+        setSessions((prev) => {
+          const map = new Map<string, SessionInfo>();
+          incoming.sessions!.forEach((s) => map.set(s.id, s));
+          const next = Array.from(map.values());
+          saveStoredSessions(next);
+          return next;
+        });
+      }
+      if (incoming.responses) {
+        setResponses((prev) => {
+          const map = new Map<string, EmotionResponse>();
+          incoming.responses!.forEach((r) => map.set(r.id, r));
+          const next = Array.from(map.values()).sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          saveStoredResponses(next);
+          return next;
+        });
+      }
+      if (incoming.activeSessionId) {
+        setActiveId(incoming.activeSessionId);
+        setActiveSessionId(incoming.activeSessionId);
+      }
+    });
+
+    return () => {
+      unsubscribeServer();
+    };
+  }, []);
+
+  // Persist handlers with Fast Automatic Sync to Server and Supabase
   const handleUpdateSessions = async (newSessions: SessionInfo[]) => {
     setSessions(newSessions);
     saveStoredSessions(newSessions);
+
+    // Fast sync to Server Backend (Shared across Mobile & PC)
+    syncWithServer({ sessions: newSessions, responses, activeSessionId }).catch((err) => {
+      console.warn('[Server Sync] Failed to sync sessions:', err);
+    });
 
     // Fast sync to Supabase if configured
     if (isSupabaseConfigured(supabaseConfig)) {
@@ -109,12 +207,15 @@ export default function App() {
         console.warn('[Supabase] Failed to fast-sync sessions:', err);
         markSyncError();
       }
+    } else {
+      markSyncSuccess();
     }
   };
 
   const handleSelectSession = (id: string) => {
     setActiveId(id);
     setActiveSessionId(id);
+    syncWithServer({ sessions, responses, activeSessionId: id }).catch(() => {});
   };
 
   const handleUpdateEmotions = (newDict: EmotionDictionary) => {
@@ -125,6 +226,11 @@ export default function App() {
   const handleUpdateResponses = async (newResponses: EmotionResponse[]) => {
     setResponses(newResponses);
     saveStoredResponses(newResponses);
+
+    // Fast sync to Server Backend
+    syncWithServer({ sessions, responses: newResponses, activeSessionId }).catch((err) => {
+      console.warn('[Server Sync] Failed to sync responses:', err);
+    });
 
     // Fast sync to Supabase if configured
     if (isSupabaseConfigured(supabaseConfig)) {
@@ -138,6 +244,8 @@ export default function App() {
         console.warn('[Supabase] Failed to fast-sync responses:', err);
         markSyncError();
       }
+    } else {
+      markSyncSuccess();
     }
   };
 
@@ -161,23 +269,32 @@ export default function App() {
     setSyncStatus('SYNCING');
 
     try {
-      // 1. Supabase Cloud Sync
+      // 1. Sync with Server Backend (Mobile & PC Real-Time Shared Store)
+      const serverResult = await syncWithServer({ sessions, responses, activeSessionId });
+      if (serverResult) {
+        if (serverResult.sessions && serverResult.sessions.length > 0) {
+          setSessions(serverResult.sessions);
+          saveStoredSessions(serverResult.sessions);
+        }
+        if (serverResult.responses && serverResult.responses.length > 0) {
+          setResponses(serverResult.responses);
+          saveStoredResponses(serverResult.responses);
+        }
+      }
+
+      // 2. Supabase Cloud Sync if configured
       if (isSupabaseConfigured(supabaseConfig)) {
-        // First fetch latest remote sessions to merge and avoid overwriting newer changes
         const remoteSessions = await fetchSupabaseSessions();
         let currentSessions = sessions;
 
         if (remoteSessions && remoteSessions.length > 0) {
           const map = new Map<string, SessionInfo>();
-          // Remote first
           remoteSessions.forEach((s) => map.set(s.id, s));
-          // Local sessions: merge or keep newest/most complete
           currentSessions.forEach((local) => {
             const remote = map.get(local.id);
             if (!remote) {
               map.set(local.id, local);
             } else {
-              // Merge roster: include all unique names
               const mergedRoster = Array.from(new Set([...(remote.roster || []), ...(local.roster || [])]));
               map.set(local.id, {
                 ...remote,
@@ -193,17 +310,14 @@ export default function App() {
           saveStoredSessions(merged);
         }
 
-        // Push all current/merged sessions to remote so Supabase has full data
         for (const s of currentSessions) {
           await upsertSessionToSupabase(s);
         }
 
-        // Push local responses
         if (responses.length > 0) {
           await batchSyncResponsesToSupabase(responses);
         }
 
-        // Fetch remote responses
         const remoteResponses = await fetchSupabaseResponses();
         if (remoteResponses && remoteResponses.length > 0) {
           setResponses((prev) => {
@@ -219,7 +333,7 @@ export default function App() {
         }
       }
 
-      // 2. Google Sheets Webhook Sync if configured
+      // 3. Google Sheets Webhook Sync if configured
       if (sheetsConfig.webhookUrl && responses.length > 0) {
         await syncBatchToGoogleSheets(responses, sheetsConfig);
       }
@@ -230,7 +344,7 @@ export default function App() {
       console.warn('[Sync Error]:', err);
       markSyncError();
     }
-  }, [supabaseConfig, sheetsConfig, sessions, responses, markSyncSuccess, markSyncError]);
+  }, [supabaseConfig, sheetsConfig, sessions, responses, activeSessionId, markSyncSuccess, markSyncError]);
 
   const handleTriggerSupabaseSync = handleManualSync;
 
@@ -374,6 +488,11 @@ export default function App() {
     saveStoredResponses(updated);
 
     try {
+      // Push to Server Backend (Shared across Mobile & PC)
+      apiSubmitResponse(newResponse).catch((err) => {
+        console.warn('[Server Sync] Failed to push before response:', err);
+      });
+
       // Push to Supabase Cloud if configured
       if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
         upsertSessionToSupabase(activeSession).catch(() => {});
@@ -434,6 +553,11 @@ export default function App() {
     saveStoredResponses(updated);
 
     try {
+      // Push to Server Backend (Shared across Mobile & PC)
+      apiSubmitResponse(newResponse).catch((err) => {
+        console.warn('[Server Sync] Failed to push after response:', err);
+      });
+
       // Push to Supabase Cloud if configured
       if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
         upsertSessionToSupabase(activeSession).catch(() => {});
