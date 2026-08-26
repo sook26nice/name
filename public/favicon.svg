@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="heartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF9076" />
+      <stop offset="100%" stop-color="#E87A5D" />
+    </linearGradient>
+    <linearGradient id="sunGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFD166" />
+      <stop offset="100%" stop-color="#F4A261" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Rounded Card Base -->
+  <rect width="64" height="64" rx="16" fill="#FFF8F5" />
+  
+  <!-- Gentle Sun Ray Sparkle behind heart -->
+  <circle cx="44" cy="18" r="8" fill="url(#sunGrad)" opacity="0.9" />
+  <path d="M44 6 L44 9 M44 27 L44 30 M32 18 L35 18 M53 18 L56 18" stroke="#F4A261" stroke-width="2.5" stroke-linecap="round" />
+
+  <!-- Stylized Warm Heart -->
+  <path d="M32 49 C32 49 14 38 14 26 C14 20 18.5 16 24 16 C27.5 16 30.5 18 32 21 C33.5 18 36.5 16 40 16 C45.5 16 50 20 50 26 C50 38 32 49 32 49 Z" 
+        fill="url(#heartGrad)" 
+        filter="drop-shadow(0px 3px 6px rgba(232, 122, 93, 0.35))" />
+        
+  <!-- Sparkle dot on heart -->
+  <circle cx="23" cy="22" r="2.5" fill="#FFFFFF" opacity="0.75" />
+</svg>

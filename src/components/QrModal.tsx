@@ -11,8 +11,10 @@ import {
   Sparkles,
   ArrowRight,
   Maximize2,
+  Download,
 } from 'lucide-react';
 import { SessionInfo, EmotionResponse } from '../types';
+import { QRCodeDisplay } from './QRCodeDisplay';
 
 interface QrModalProps {
   activeSession: SessionInfo;
@@ -28,6 +30,7 @@ export const QrModal: React.FC<QrModalProps> = ({
   onGoToStudentHome,
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
 
   // Calculate live session stats
@@ -35,15 +38,28 @@ export const QrModal: React.FC<QrModalProps> = ({
   const beforeCount = sessionResponses.filter((r) => r.type === 'BEFORE').length;
   const afterCount = sessionResponses.filter((r) => r.type === 'AFTER').length;
 
-  // Use QuickChart / Google Chart / simple reliable QR image generator API with svg fallback
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(
-    currentUrl
-  )}&margin=10&color=1c1917`;
-
   const handleCopyLink = () => {
     navigator.clipboard.writeText(currentUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const handleDownloadQr = () => {
+    if (qrDataUrl) {
+      const a = document.createElement('a');
+      a.href = qrDataUrl;
+      a.download = `마음출석부_QR_${activeSession.title.replace(/\s+/g, '_')}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      window.open(
+        `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
+          currentUrl
+        )}&margin=10&color=2D2A26`,
+        '_blank'
+      );
+    }
   };
 
   return (
@@ -53,7 +69,7 @@ export const QrModal: React.FC<QrModalProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#F5EFE6] rounded-full transition-colors"
+          className="absolute top-4 right-4 p-2 text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#F5EFE6] rounded-full transition-colors cursor-pointer"
           title="닫기"
         >
           <X className="w-5 h-5" />
@@ -73,14 +89,30 @@ export const QrModal: React.FC<QrModalProps> = ({
           </p>
         </div>
 
-        {/* QR Code Frame */}
-        <div className="flex justify-center items-center py-2">
-          <div className="p-4 bg-white rounded-3xl border-4 border-[#3D3A35] shadow-lg relative group">
-            <img
-              src={qrCodeUrl}
-              alt="수업 참여 QR 코드"
-              className="w-56 h-56 sm:w-64 sm:h-64 object-contain rounded-xl"
+        {/* QR Code Frame with Offline Engine & High Quality Rendering */}
+        <div className="flex flex-col justify-center items-center py-2">
+          <div className="p-4 bg-white rounded-3xl border-4 border-[#3D3A35] shadow-xl relative group flex flex-col items-center">
+            <QRCodeDisplay
+              text={currentUrl}
+              size={260}
+              onGenerated={(url) => setQrDataUrl(url)}
             />
+            <div className="mt-2 text-center">
+              <span className="text-[11px] font-sans font-bold px-3 py-0.5 rounded-full bg-[#2D2A26] text-white opacity-90 inline-block">
+                스마트폰 카메라로 비추세요
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={handleDownloadQr}
+              className="px-3.5 py-1.5 bg-[#FAF9F7] hover:bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] text-xs font-sans font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <Download className="w-3.5 h-3.5 text-[#8C867E]" />
+              <span>QR 이미지 저장 (PNG)</span>
+            </button>
           </div>
         </div>
 
@@ -100,7 +132,7 @@ export const QrModal: React.FC<QrModalProps> = ({
 
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#F5EFE6] text-[#3D3A35] border border-[#EBE7E1] flex items-center justify-center font-bold">
-              <Moon className="w-5 h-5" />
+              <Moon className="w-4 h-4" />
             </div>
             <div>
               <span className="text-[10px] font-sans font-bold text-[#8C867E] block uppercase tracking-wider">수업 후 제출</span>
@@ -116,7 +148,7 @@ export const QrModal: React.FC<QrModalProps> = ({
           <button
             type="button"
             onClick={handleCopyLink}
-            className="flex-1 py-3.5 px-4 bg-[#F5EFE6] hover:bg-[#EBE7E1] text-[#3D3A35] font-sans font-bold text-xs sm:text-sm rounded-xl border border-[#EBE7E1] flex items-center justify-center gap-1.5 transition-all"
+            className="flex-1 py-3.5 px-4 bg-[#F5EFE6] hover:bg-[#EBE7E1] text-[#3D3A35] font-sans font-bold text-xs sm:text-sm rounded-xl border border-[#EBE7E1] flex items-center justify-center gap-1.5 transition-all cursor-pointer"
           >
             {copiedLink ? (
               <>
@@ -137,7 +169,7 @@ export const QrModal: React.FC<QrModalProps> = ({
               onClose();
               onGoToStudentHome();
             }}
-            className="flex-1 py-3.5 px-4 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-[#E87A5D]/20 flex items-center justify-center gap-1.5 transition-all"
+            className="flex-1 py-3.5 px-4 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-[#E87A5D]/20 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
           >
             <span>출석부 화면으로 이동</span>
             <ArrowRight className="w-4 h-4" />

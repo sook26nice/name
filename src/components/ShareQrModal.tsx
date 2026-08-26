@@ -17,6 +17,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { SessionInfo, EmotionResponse } from '../types';
+import { QRCodeDisplay } from './QRCodeDisplay';
 
 interface ShareQrModalProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState(false);
   const [activeTab, setActiveTab] = useState<'QR' | 'LINK'>('QR');
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -46,11 +48,6 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
   const beforeCount = sessionResponses.filter((r) => r.type === 'BEFORE').length;
   const afterCount = sessionResponses.filter((r) => r.type === 'AFTER').length;
   const totalRoster = (activeSession.roster || []).length;
-
-  // High-res QR code API URL
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=380x380&data=${encodeURIComponent(
-    currentUrl
-  )}&margin=12&color=2D2A26`;
 
   // Pre-formatted friendly share message for KakaoTalk / SMS / Slack
   const shareMessageText = `[마음 출석부 - ${activeSession.title}]
@@ -82,7 +79,6 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
           url: currentUrl,
         });
       } catch (err) {
-        // Fallback to copy
         handleCopyLink();
       }
     } else {
@@ -90,21 +86,23 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
     }
   };
 
-  // Download QR Code Image
-  const handleDownloadQr = async () => {
-    try {
-      const response = await fetch(qrCodeUrl);
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
+  // Download QR Code Image (Offline-first from canvas dataURL)
+  const handleDownloadQr = () => {
+    if (qrDataUrl) {
       const a = document.createElement('a');
-      a.href = blobUrl;
+      a.href = qrDataUrl;
       a.download = `마음출석부_QR_${activeSession.title.replace(/\s+/g, '_')}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(qrCodeUrl, '_blank');
+    } else {
+      // Fallback
+      window.open(
+        `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
+          currentUrl
+        )}&margin=10&color=2D2A26`,
+        '_blank'
+      );
     }
   };
 
@@ -183,17 +181,17 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
                 <span className="text-[#8C867E]">({activeSession.date})</span>
               </div>
 
-              {/* QR Image Box */}
+              {/* Robust Client-rendered QR Code Component */}
               <div className="flex flex-col items-center justify-center py-1">
-                <div className="p-4 bg-white rounded-3xl border-4 border-[#3D3A35] shadow-xl relative group">
-                  <img
-                    src={qrCodeUrl}
-                    alt="접속용 QR 코드"
-                    className="w-56 h-56 sm:w-64 sm:h-64 object-contain rounded-xl"
+                <div className="p-4 bg-white rounded-3xl border-4 border-[#3D3A35] shadow-xl relative group flex flex-col items-center">
+                  <QRCodeDisplay
+                    text={currentUrl}
+                    size={260}
+                    onGenerated={(url) => setQrDataUrl(url)}
                   />
-                  <div className="absolute inset-x-0 bottom-2 text-center pointer-events-none">
-                    <span className="text-[10px] font-sans font-bold px-2.5 py-0.5 rounded-full bg-[#2D2A26] text-white opacity-85">
-                      카메라 앱으로 비추세요
+                  <div className="mt-2 text-center">
+                    <span className="text-[11px] font-sans font-bold px-3 py-0.5 rounded-full bg-[#2D2A26] text-white opacity-90 inline-block">
+                      스마트폰 카메라로 비추세요
                     </span>
                   </div>
                 </div>
