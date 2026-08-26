@@ -73,4 +73,12 @@ export interface GoogleSheetsConfig {
   sheetId?: string;
 }
 
+export interface SupabaseConfig {
+  url: string;
+  anonKey: string;
+  autoSync: boolean;
+  isConnected?: boolean;
+  lastSyncedAt?: string;
+}
+
 export type AppView = 'STUDENT_HOME' | 'STEP_BEFORE' | 'STEP_AFTER' | 'ADMIN' | 'PRESENT_QR';

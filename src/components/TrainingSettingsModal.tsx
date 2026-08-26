@@ -24,10 +24,21 @@ import {
   CheckCircle2,
   RefreshCw,
   Send,
+  Cloud,
+  Globe,
+  Wifi,
+  Key,
+  ShieldCheck,
+  Smartphone,
 } from 'lucide-react';
-import { SessionInfo, GoogleSheetsConfig, EmotionResponse } from '../types';
+import { SessionInfo, GoogleSheetsConfig, EmotionResponse, SupabaseConfig } from '../types';
 import { GOOGLE_APPS_SCRIPT_CODE } from '../utils/gasTemplate';
 import { testGoogleSheetsWebhook, syncBatchToGoogleSheets, exportResponsesToCsv, downloadFile } from '../utils/storage';
+import {
+  SUPABASE_SQL_SCHEMA,
+  testSupabaseConnection,
+  batchSyncResponsesToSupabase,
+} from '../utils/supabaseClient';
 
 interface TrainingSettingsModalProps {
   isOpen: boolean;
@@ -38,10 +49,13 @@ interface TrainingSettingsModalProps {
   onUpdateSessions: (sessions: SessionInfo[]) => void;
   sheetsConfig: GoogleSheetsConfig;
   onUpdateSheetsConfig: (config: GoogleSheetsConfig) => void;
+  supabaseConfig: SupabaseConfig;
+  onUpdateSupabaseConfig: (config: SupabaseConfig) => void;
   responses: EmotionResponse[];
+  onTriggerSupabaseSync?: () => Promise<void>;
 }
 
-type SettingsTab = 'ROSTER' | 'INFO' | 'SHEETS' | 'SESSIONS';
+type SettingsTab = 'ROSTER' | 'INFO' | 'SUPABASE' | 'SHEETS' | 'SESSIONS';
 
 export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
   isOpen,
@@ -52,7 +66,10 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
   onUpdateSessions,
   sheetsConfig,
   onUpdateSheetsConfig,
+  supabaseConfig,
+  onUpdateSupabaseConfig,
   responses,
+  onTriggerSupabaseSync,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('ROSTER');
 
@@ -71,6 +88,15 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
   const [singleNameInput, setSingleNameInput] = useState('');
   const [saveFeedback, setSaveFeedback] = useState(false);
   const [copiedFeedback, setCopiedFeedback] = useState(false);
+
+  // Supabase Config State
+  const [supabaseUrl, setSupabaseUrl] = useState(supabaseConfig.url || '');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState(supabaseConfig.anonKey || '');
+  const [supabaseAutoSync, setSupabaseAutoSync] = useState(supabaseConfig.autoSync ?? true);
+  const [supabaseTestStatus, setSupabaseTestStatus] = useState<'IDLE' | 'TESTING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [supabaseTestMessage, setSupabaseTestMessage] = useState<string>('');
+  const [supabaseBatchSyncStatus, setSupabaseBatchSyncStatus] = useState<'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [copiedSupabaseSql, setCopiedSupabaseSql] = useState(false);
 
   // Google Sheets Config State
   const [webhookUrl, setWebhookUrl] = useState(sheetsConfig.webhookUrl || '');
@@ -97,9 +123,14 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
     setDescription(activeSession.description || '');
     setRoster(activeSession.roster || []);
     setBulkInputText((activeSession.roster || []).join('\n'));
+
+    setSupabaseUrl(supabaseConfig.url || '');
+    setSupabaseAnonKey(supabaseConfig.anonKey || '');
+    setSupabaseAutoSync(supabaseConfig.autoSync ?? true);
+
     setWebhookUrl(sheetsConfig.webhookUrl || '');
     setAutoSync(sheetsConfig.autoSync ?? true);
-  }, [activeSession, sheetsConfig, isOpen]);
+  }, [activeSession, sheetsConfig, supabaseConfig, isOpen]);
 
   if (!isOpen) return null;
 
@@ -282,6 +313,80 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
     }
   };
 
+  // Save Supabase Config
+  const handleSaveSupabaseConfig = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const newConfig: SupabaseConfig = {
+      url: supabaseUrl.trim(),
+      anonKey: supabaseAnonKey.trim(),
+      autoSync: supabaseAutoSync,
+      isConnected: !!(supabaseUrl.trim() && supabaseAnonKey.trim()),
+      lastSyncedAt: new Date().toISOString(),
+    };
+    onUpdateSupabaseConfig(newConfig);
+    setSaveFeedback(true);
+    setTimeout(() => setSaveFeedback(false), 2000);
+  };
+
+  // Test Supabase Connection
+  const handleTestSupabase = async () => {
+    if (!supabaseUrl.trim() || !supabaseAnonKey.trim()) {
+      alert('Supabase Project URL과 Anon Key를 모두 입력해주세요.');
+      return;
+    }
+    setSupabaseTestStatus('TESTING');
+    setSupabaseTestMessage('');
+
+    const targetConfig: SupabaseConfig = {
+      url: supabaseUrl.trim(),
+      anonKey: supabaseAnonKey.trim(),
+      autoSync: supabaseAutoSync,
+    };
+
+    const res = await testSupabaseConnection(targetConfig);
+    if (res.success) {
+      setSupabaseTestStatus('SUCCESS');
+      setSupabaseTestMessage(res.message);
+      handleSaveSupabaseConfig();
+      if (onTriggerSupabaseSync) {
+        await onTriggerSupabaseSync();
+      }
+      setTimeout(() => setSupabaseTestStatus('IDLE'), 4000);
+    } else {
+      setSupabaseTestStatus('ERROR');
+      setSupabaseTestMessage(res.message);
+    }
+  };
+
+  // Batch Sync Responses to Supabase
+  const handleBatchSyncSupabase = async () => {
+    if (!supabaseUrl.trim() || !supabaseAnonKey.trim()) {
+      alert('Supabase Project URL과 Anon Key를 먼저 설정해주세요.');
+      return;
+    }
+    if (responses.length === 0) {
+      alert('현재 업로드할 출석부 응답 데이터가 없습니다.');
+      return;
+    }
+
+    setSupabaseBatchSyncStatus('SYNCING');
+    const result = await batchSyncResponsesToSupabase(responses);
+    if (result.success) {
+      setSupabaseBatchSyncStatus('SUCCESS');
+      setTimeout(() => setSupabaseBatchSyncStatus('IDLE'), 3000);
+    } else {
+      setSupabaseBatchSyncStatus('ERROR');
+      setTimeout(() => setSupabaseBatchSyncStatus('IDLE'), 4000);
+    }
+  };
+
+  // Copy Supabase SQL Schema
+  const handleCopySupabaseSql = () => {
+    navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
+    setCopiedSupabaseSql(true);
+    setTimeout(() => setCopiedSupabaseSql(false), 2000);
+  };
+
   // Save Google Sheets Config
   const handleSaveSheetsConfig = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -305,7 +410,6 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
     const success = await testGoogleSheetsWebhook(webhookUrl.trim());
     if (success) {
       setTestStatus('SUCCESS');
-      // Also save
       handleSaveSheetsConfig();
       setTimeout(() => setTestStatus('IDLE'), 3000);
     } else {
@@ -314,7 +418,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
     }
   };
 
-  // Batch Sync All Responses
+  // Batch Sync All Responses to Google Sheets
   const handleBatchSync = async () => {
     if (!webhookUrl.trim()) {
       alert('구글 Apps Script 웹 앱 URL이 설정되지 않았습니다.');
@@ -354,11 +458,12 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
     downloadFile(csvContent, fileName, 'text/csv;charset=utf-8;');
   };
 
+  const isSupabaseConnected = !!(supabaseConfig.url && supabaseConfig.anonKey);
   const isSheetsConnected = !!sheetsConfig.webhookUrl;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#2D2A26]/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-white w-full max-w-3xl max-h-[90vh] rounded-3xl border border-[#EBE7E1] shadow-2xl flex flex-col overflow-hidden text-[#3D3A35]">
+      <div className="bg-white w-full max-w-3xl max-h-[92vh] rounded-3xl border border-[#EBE7E1] shadow-2xl flex flex-col overflow-hidden text-[#3D3A35]">
         {/* Modal Header */}
         <div className="px-6 py-5 border-b border-[#EBE7E1] bg-[#FAF9F7] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -373,15 +478,15 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                 <span className="text-[10px] font-sans font-bold px-2.5 py-0.5 rounded-full bg-[#E87A5D] text-white">
                   주관자 전용
                 </span>
-                {isSheetsConnected && (
-                  <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    시트 연동중
+                {isSupabaseConnected && (
+                  <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-300 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                    클라우드 실시간 동기화 ON
                   </span>
                 )}
               </div>
               <p className="text-xs font-sans text-[#8C867E]">
-                연수생 명단 등록, 직무연수 내용 수정 및 구글 스프레드시트 실시간 기록 연동을 설정합니다.
+                연수생 명단 등록, 실시간 클라우드 동기화(Supabase) 및 구글 시트 연동을 설정합니다.
               </p>
             </div>
           </div>
@@ -389,7 +494,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 text-[#8C867E] hover:text-[#2D2A26] hover:bg-[#F5EFE6] rounded-full transition-colors"
+            className="p-2 text-[#8C867E] hover:text-[#2D2A26] hover:bg-[#F5EFE6] rounded-full transition-colors cursor-pointer"
             title="닫기"
           >
             <X className="w-5 h-5" />
@@ -401,7 +506,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('ROSTER')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 cursor-pointer ${
               activeTab === 'ROSTER'
                 ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
                 : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
@@ -414,7 +519,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('INFO')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 cursor-pointer ${
               activeTab === 'INFO'
                 ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
                 : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
@@ -424,10 +529,31 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
             <span>직무연수 내용 수정</span>
           </button>
 
+          {/* TAB: Realtime Cloud Sync (Supabase) */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('SUPABASE')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 cursor-pointer ${
+              activeTab === 'SUPABASE'
+                ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
+                : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
+            }`}
+          >
+            <Cloud className="w-4 h-4" />
+            <span className="flex items-center gap-1.5">
+              <span>기기 간 실시간 동기화 (Supabase)</span>
+              {isSupabaseConnected ? (
+                <span className="w-2 h-2 rounded-full bg-blue-500" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+              )}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => setActiveTab('SHEETS')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 cursor-pointer ${
               activeTab === 'SHEETS'
                 ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
                 : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
@@ -439,7 +565,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
               {isSheetsConnected ? (
                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
               ) : (
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <span className="w-2 h-2 rounded-full bg-gray-300" />
               )}
             </span>
           </button>
@@ -447,7 +573,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('SESSIONS')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 ${
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-t-xl font-sans text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 cursor-pointer ${
               activeTab === 'SESSIONS'
                 ? 'border-[#E87A5D] text-[#E87A5D] bg-[#FFF1ED]/40'
                 : 'border-transparent text-[#8C867E] hover:text-[#3D3A35] hover:bg-[#FAF9F7]'
@@ -460,7 +586,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
 
         {/* Modal Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* TAB 1: ROSTER MANAGEMENT (연수생 명단 입력) */}
+          {/* TAB 1: ROSTER MANAGEMENT */}
           {activeTab === 'ROSTER' && (
             <div className="space-y-6">
               {/* Top Banner Guide */}
@@ -580,7 +706,6 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                     <span>현재 등록된 연수생 명단 ({roster.length}명)</span>
                   </h3>
 
-                  {/* Single Add Input */}
                   <form onSubmit={handleAddSingleName} className="flex items-center gap-2">
                     <input
                       type="text"
@@ -600,33 +725,32 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                   </form>
                 </div>
 
-                {/* Name Badges Grid */}
-                <div className="p-4 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] max-h-56 overflow-y-auto">
-                  {roster.length > 0 ? (
+                <div className="p-4 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] min-h-[120px] max-h-[220px] overflow-y-auto">
+                  {roster.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-6 text-center text-[#8C867E]">
+                      <Users className="w-8 h-8 opacity-30 mb-2" />
+                      <p className="text-xs font-sans">등록된 연수생이 없습니다.</p>
+                      <p className="text-[11px] mt-0.5">상단에 명단을 붙여넣거나 위의 예시 명단을 불러오세요.</p>
+                    </div>
+                  ) : (
                     <div className="flex flex-wrap gap-2">
                       {roster.map((name, idx) => (
                         <span
                           key={`${name}-${idx}`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white rounded-xl border border-[#EBE7E1] text-xs font-sans font-medium text-[#3D3A35] shadow-2xs group hover:border-[#E87A5D] transition-colors"
+                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#EBE7E1] rounded-xl text-xs font-sans text-[#2D2A26] shadow-2xs group hover:border-[#E87A5D]/40 transition-all"
                         >
-                          <span className="text-[10px] text-[#8C867E] font-mono">{idx + 1}.</span>
-                          <span className="font-bold text-[#2D2A26]">{name}</span>
+                          <span className="font-bold text-[#E87A5D] text-[10px]">{idx + 1}</span>
+                          <span>{name}</span>
                           <button
                             type="button"
                             onClick={() => handleRemoveName(name)}
-                            className="text-[#8C867E] hover:text-rose-600 rounded-full p-0.5 transition-colors cursor-pointer"
-                            title={`${name} 삭제`}
+                            className="text-[#8C867E] hover:text-rose-600 transition-colors cursor-pointer"
+                            title="이름 삭제"
                           >
                             <X className="w-3 h-3" />
                           </button>
                         </span>
                       ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-6 text-xs font-sans text-[#8C867E] space-y-1">
-                      <Users className="w-6 h-6 mx-auto text-[#8C867E]/50 mb-1" />
-                      <p>등록된 연수생이 없습니다.</p>
-                      <p className="text-[11px]">위 텍스트창에 명단을 붙여넣거나 개별 이름을 입력하세요.</p>
                     </div>
                   )}
                 </div>
@@ -634,58 +758,71 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: TRAINING INFO (직무연수 내용 수정) */}
+          {/* TAB 2: EDIT SESSION INFO */}
           {activeTab === 'INFO' && (
             <div className="space-y-4">
+              <div className="p-4 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-sans font-bold text-[#2D2A26]">
+                    직무연수 기본 정보 수정
+                  </h3>
+                  <p className="text-[11px] font-sans text-[#8C867E]">
+                    출석부 상단과 QR 화면에 표시되는 연수 제목 및 강사 정보를 변경합니다.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveAll}
+                  className="px-4 py-2 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>정보 저장하기</span>
+                </button>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Title */}
-                <div className="sm:col-span-2 space-y-1">
-                  <label className="block text-xs font-sans font-bold text-[#3D3A35]">
-                    직무연수 과정명 *
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-sans font-bold text-[#3D3A35] mb-1.5">
+                    연수 과정명 *
                   </label>
                   <input
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    placeholder="예: 2026 초·중등 교원 AI 에듀테크 활용 역량강화 직무연수"
                     className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                    placeholder="예: 2026 교원 디지털 리터러시 역량강화 직무연수"
                   />
                 </div>
 
-                {/* Subtitle / Topic */}
-                <div className="sm:col-span-2 space-y-1">
-                  <label className="block text-xs font-sans font-bold text-[#3D3A35]">
-                    연수 세부 주제 / 차시명
+                <div>
+                  <label className="block text-xs font-sans font-bold text-[#3D3A35] mb-1.5">
+                    연수 부제 (선택)
                   </label>
                   <input
                     type="text"
                     value={subtitle}
                     onChange={(e) => setSubtitle(e.target.value)}
-                    placeholder="예: 1차시: 마음 출석부와 프롬프트 엔지니어링 실습"
                     className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                    placeholder="예: 마음 챙김과 함께하는 수업 혁신"
                   />
                 </div>
 
-                {/* Instructor */}
-                <div className="space-y-1">
-                  <label className="block text-xs font-sans font-bold text-[#3D3A35] flex items-center gap-1">
-                    <User className="w-3.5 h-3.5 text-[#E87A5D]" />
-                    <span>강사 / 진행자 성명</span>
+                <div>
+                  <label className="block text-xs font-sans font-bold text-[#3D3A35] mb-1.5">
+                    강사 성명 (선택)
                   </label>
                   <input
                     type="text"
                     value={instructor}
                     onChange={(e) => setInstructor(e.target.value)}
-                    placeholder="예: 김민수 수석교사 / 미래교육원"
                     className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                    placeholder="예: 김선생 (교육연구사)"
                   />
                 </div>
 
-                {/* Date */}
-                <div className="space-y-1">
-                  <label className="block text-xs font-sans font-bold text-[#3D3A35] flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 text-[#E87A5D]" />
-                    <span>연수 일자 *</span>
+                <div>
+                  <label className="block text-xs font-sans font-bold text-[#3D3A35] mb-1.5">
+                    연수 일자
                   </label>
                   <input
                     type="date"
@@ -695,101 +832,352 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
                   />
                 </div>
 
-                {/* Location */}
-                <div className="space-y-1">
-                  <label className="block text-xs font-sans font-bold text-[#3D3A35] flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-[#E87A5D]" />
-                    <span>연수 장소 / 강의실</span>
+                <div>
+                  <label className="block text-xs font-sans font-bold text-[#3D3A35] mb-1.5">
+                    연수 장소 (선택)
                   </label>
                   <input
                     type="text"
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
-                    placeholder="예: 교육정보원 3층 스마트실습실"
                     className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                    placeholder="예: 미래교육센터 302호 ICT실"
                   />
                 </div>
 
-                {/* Target Audience */}
-                <div className="space-y-1">
-                  <label className="block text-xs font-sans font-bold text-[#3D3A35] flex items-center gap-1">
-                    <Users className="w-3.5 h-3.5 text-[#E87A5D]" />
-                    <span>연수 대상 / 참여 기수</span>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-sans font-bold text-[#3D3A35] mb-1.5">
+                    연수 대상 / 대상자 안내
                   </label>
                   <input
                     type="text"
                     value={targetAudience}
                     onChange={(e) => setTargetAudience(e.target.value)}
-                    placeholder="예: 관내 초·중등 교원 및 교육전문직"
                     className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                    placeholder="예: 관내 초·중등 교원 및 교육전문직 20명"
                   />
                 </div>
 
-                {/* Description & Notice */}
-                <div className="sm:col-span-2 space-y-1">
-                  <label className="block text-xs font-sans font-bold text-[#3D3A35] flex items-center gap-1">
-                    <FileText className="w-3.5 h-3.5 text-[#E87A5D]" />
-                    <span>연수생 안내 및 환영 메시지 (출석 화면 상단 표시)</span>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-sans font-bold text-[#3D3A35] mb-1.5">
+                    연수 개요 및 안내사항
                   </label>
                   <textarea
                     rows={3}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="연수생들에게 전달할 안내 문구나 환영의 말을 적어주세요. (예: 연수 시작 전 설레는 마음과 종료 후 소감을 솔직하게 남겨주세요!)"
-                    className="w-full p-3.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D] leading-relaxed"
+                    className="w-full p-3.5 text-xs sm:text-sm font-sans bg-[#FAF9F7] border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E87A5D]"
+                    placeholder="연수에 대한 소개나 당부사항을 입력하세요."
                   />
                 </div>
-              </div>
-
-              {/* Action Button */}
-              <div className="pt-3 border-t border-[#EBE7E1] flex items-center justify-between">
-                <span className="text-xs font-sans text-[#8C867E]">
-                  수정된 내용은 모든 연수생의 화면과 출석부에 즉시 반영됩니다.
-                </span>
-
-                <button
-                  type="button"
-                  onClick={handleSaveAll}
-                  className="px-5 py-2.5 bg-[#E87A5D] hover:bg-[#d3694c] text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-[#E87A5D]/20 transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>연수 정보 저장하기</span>
-                </button>
               </div>
             </div>
           )}
 
-          {/* TAB 3: GOOGLE SHEETS INTEGRATION (구글 시트 자동 기록 연동) */}
-          {activeTab === 'SHEETS' && (
+          {/* TAB 3: SUPABASE REALTIME CLOUD SYNC */}
+          {activeTab === 'SUPABASE' && (
             <div className="space-y-6">
-              {/* Connection Status Card */}
-              <div
-                className={`p-4 rounded-2xl border flex items-start sm:items-center justify-between gap-3 ${
-                  isSheetsConnected
-                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
-                    : 'bg-[#FAF9F7] border-[#EBE7E1] text-[#3D3A35]'
-                }`}
-              >
+              {/* Header Box */}
+              <div className="bg-[#FAF9F7] rounded-2xl p-4 sm:p-5 border border-[#EBE7E1] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center font-bold">
+                    <Cloud className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-serif font-bold text-[#2D2A26]">
+                        어느 기기에서든 실시간 동기화 (Supabase 연동)
+                      </h3>
+                      {isSupabaseConnected ? (
+                        <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                          연동 설정됨
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                          설정 필요
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs font-sans text-[#8C867E] mt-0.5">
+                      연수생 스마트폰과 강사 PC, 빔프로젝터 화면이 <strong>실시간으로 완벽 동기화</strong>됩니다.
+                    </p>
+                  </div>
+                </div>
+
+                <a
+                  href="https://supabase.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-[#F5EFE6] text-[#2D2A26] border border-[#EBE7E1] font-sans font-bold text-xs rounded-xl transition-all shrink-0"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Supabase 홈페이지</span>
+                </a>
+              </div>
+
+              {/* 3 Step Quick Setup Guide */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-sans font-bold text-[#2D2A26] flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Supabase 1분 무료 연동 방법</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={handleCopySupabaseSql}
+                    className="inline-flex items-center gap-1 text-xs font-sans font-bold text-blue-600 hover:underline cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copiedSupabaseSql ? 'SQL 쿼리 복사 완료!' : 'SQL 테이블 생성 쿼리 복사'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-sans">
+                  {/* Step 1 */}
+                  <div className="p-3.5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">
+                        1
+                      </span>
+                      <span className="text-[10px] text-blue-600 font-bold">무료 프로젝트</span>
+                    </div>
+                    <p className="font-bold text-[#2D2A26]">Supabase 프로젝트 생성</p>
+                    <p className="text-[#8C867E] text-[11px] leading-relaxed">
+                      <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-blue-600 underline">supabase.com</a> 가입 후 <strong>[New Project]</strong>를 생성합니다.
+                    </p>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="p-3.5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">
+                        2
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopySupabaseSql}
+                        className="text-[10px] text-blue-600 hover:underline flex items-center gap-0.5 font-bold cursor-pointer"
+                      >
+                        <span>SQL 복사</span>
+                        <Copy className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                    <p className="font-bold text-[#2D2A26]">SQL Editor에서 실행</p>
+                    <p className="text-[#8C867E] text-[11px] leading-relaxed">
+                      좌측 메뉴 <strong>[SQL Editor]</strong>에 복사한 SQL을 붙여넣고 <strong>[Run]</strong>을 누르면 테이블이 자동 생성됩니다.
+                    </p>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="p-3.5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">
+                        3
+                      </span>
+                      <span className="text-[10px] text-emerald-600 font-bold">API 키 복사</span>
+                    </div>
+                    <p className="font-bold text-[#2D2A26]">Project URL & Anon Key 입력</p>
+                    <p className="text-[#8C867E] text-[11px] leading-relaxed">
+                      <strong>[Project Settings] → [API]</strong>에서 URL과 anon public key를 복사해 아래 입력란에 넣습니다.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Supabase Configuration Form */}
+              <form onSubmit={handleSaveSupabaseConfig} className="p-5 bg-[#FAF9F7] rounded-2xl border border-[#EBE7E1] space-y-4">
+                {/* Project URL */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-sans font-bold text-[#2D2A26] flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Project URL (프로젝트 URL) *</span>
+                    </span>
+                    <span className="text-[11px] font-normal text-[#8C867E]">
+                      형식: https://xyzcompany.supabase.co
+                    </span>
+                  </label>
+                  <input
+                    type="url"
+                    value={supabaseUrl}
+                    onChange={(e) => setSupabaseUrl(e.target.value)}
+                    placeholder="https://your-project-id.supabase.co"
+                    className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-white border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+
+                {/* Anon Public Key */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-sans font-bold text-[#2D2A26] flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Key className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Anon Key (공개 anon public key) *</span>
+                    </span>
+                    <span className="text-[11px] font-normal text-[#8C867E]">
+                      클라이언트용 공개 키 (eyJhbGci...)
+                    </span>
+                  </label>
+                  <input
+                    type="password"
+                    value={supabaseAnonKey}
+                    onChange={(e) => setSupabaseAnonKey(e.target.value)}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-sans bg-white border border-[#EBE7E1] rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+
+                {/* Status Message from connection test */}
+                {supabaseTestMessage && (
                   <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                      isSheetsConnected
-                        ? 'bg-emerald-500 text-white shadow-xs'
-                        : 'bg-[#F5EFE6] text-[#8C867E]'
+                    className={`p-3 rounded-xl text-xs font-sans flex items-start gap-2 ${
+                      supabaseTestStatus === 'SUCCESS'
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        : 'bg-rose-50 text-rose-800 border border-rose-200'
                     }`}
                   >
+                    {supabaseTestStatus === 'SUCCESS' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    )}
+                    <div className="leading-relaxed">
+                      <p className="font-bold">{supabaseTestMessage}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <label className="flex items-center gap-2 text-xs font-sans text-[#3D3A35] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={supabaseAutoSync}
+                      onChange={(e) => setSupabaseAutoSync(e.target.checked)}
+                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-[#EBE7E1]"
+                    />
+                    <span className="font-bold">연수생 제출 및 출석부 변경사항 모든 기기에 실시간 자동 동기화</span>
+                  </label>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestSupabase}
+                      disabled={!supabaseUrl.trim() || !supabaseAnonKey.trim() || supabaseTestStatus === 'TESTING'}
+                      className="px-3.5 py-2 bg-white hover:bg-[#F5EFE6] text-[#3D3A35] font-sans font-bold text-xs rounded-xl border border-[#EBE7E1] transition-all flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                    >
+                      {supabaseTestStatus === 'TESTING' ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                          <span>연결 확인 중...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Wifi className="w-3.5 h-3.5 text-blue-600" />
+                          <span>연결 테스트 & 동기화</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-sans font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>키 저장하기</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Data Sync & Batch Upload Action Box */}
+              <div className="p-4 bg-white rounded-2xl border border-[#EBE7E1] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-sans font-bold text-[#2D2A26]">
+                    기존 로컬 데이터 클라우드로 일괄 업로드 (누적 응답 {responses.length}건)
+                  </h4>
+                  <p className="text-[11px] font-sans text-[#8C867E] mt-0.5">
+                    현재 브라우저에 저장된 출석 데이터 전체를 Supabase 클라우드로 한 번에 동기화합니다.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={handleBatchSyncSupabase}
+                    disabled={!supabaseUrl.trim() || !supabaseAnonKey.trim() || responses.length === 0 || supabaseBatchSyncStatus === 'SYNCING'}
+                    className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-sans font-bold text-xs rounded-xl border border-blue-200 transition-all flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                  >
+                    {supabaseBatchSyncStatus === 'SYNCING' ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>클라우드로 업로드 중...</span>
+                      </>
+                    ) : supabaseBatchSyncStatus === 'SUCCESS' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="text-emerald-700">업로드 완료!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cloud className="w-3.5 h-3.5" />
+                        <span>전체 응답 Supabase로 전송</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* View SQL Schema Box */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-sans font-bold text-[#3D3A35] flex items-center gap-1">
+                    <Code className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Supabase SQL 테이블 생성 쿼리 미리보기</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopySupabaseSql}
+                    className="text-xs font-sans font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copiedSupabaseSql ? '복사됨!' : '전체 SQL 복사'}</span>
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <pre className="p-3.5 bg-[#2D2A26] text-[#FAF9F7] font-mono text-[11px] rounded-2xl overflow-x-auto max-h-48 leading-relaxed selection:bg-blue-600">
+                    {SUPABASE_SQL_SCHEMA}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: GOOGLE SHEETS */}
+          {activeTab === 'SHEETS' && (
+            <div className="space-y-6">
+              {/* Header Box */}
+              <div className="bg-[#FAF9F7] rounded-2xl p-4 sm:p-5 border border-[#EBE7E1] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center font-bold">
                     <Database className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-serif font-bold text-sm sm:text-base">
-                      {isSheetsConnected
-                        ? '구글 스프레드시트 실시간 기록 활성화'
-                        : '구글 스프레드시트 미연동 (로컬 저장 모드)'}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-serif font-bold text-[#2D2A26]">
+                        구글 스프레드시트 실시간 기록 연동
+                      </h3>
+                      {isSheetsConnected ? (
+                        <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                          연동 활성화됨
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                          미설정
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs font-sans text-[#8C867E] mt-0.5">
-                      {isSheetsConnected
-                        ? '연수생이 출석 및 감정 소감을 제출할 때마다 구글 시트에 행이 실시간 자동 추가됩니다.'
-                        : '연수생들의 제출 데이터가 브라우저에 안전하게 보관되고 있습니다. 아래 3분 가이드로 구글 시트를 연동해보세요.'}
+                      연수생들이 제출한 출석부 응답이 내 구글 스프레드시트에 행으로 자동 누적됩니다.
                     </p>
                   </div>
                 </div>
@@ -1026,7 +1414,7 @@ export const TrainingSettingsModal: React.FC<TrainingSettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 4: ALL SESSIONS (연수 과정 목록 및 신규 개설) */}
+          {/* TAB 5: ALL SESSIONS */}
           {activeTab === 'SESSIONS' && (
             <div className="space-y-6">
               {/* Existing Sessions List */}

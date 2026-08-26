@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Header } from './components/Header';
 import { StudentHome } from './components/StudentHome';
 import { BeforeStep } from './components/BeforeStep';
@@ -13,6 +13,7 @@ import {
   EmotionDictionary,
   EmotionResponse,
   GoogleSheetsConfig,
+  SupabaseConfig,
   EmotionCategoryKey,
 } from './types';
 import {
@@ -30,6 +31,17 @@ import {
   setStoredCurrentStudent,
   syncResponseToGoogleSheets,
 } from './utils/storage';
+import {
+  getStoredSupabaseConfig,
+  saveStoredSupabaseConfig,
+  fetchSupabaseSessions,
+  fetchSupabaseResponses,
+  subscribeToSupabaseRealtime,
+  pushResponseToSupabase,
+  upsertSessionToSupabase,
+  batchSyncResponsesToSupabase,
+  isSupabaseConfigured,
+} from './utils/supabaseClient';
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>(getStoredSessions);
@@ -37,6 +49,7 @@ export default function App() {
   const [emotionsDict, setEmotionsDict] = useState<EmotionDictionary>(getStoredEmotions);
   const [responses, setResponses] = useState<EmotionResponse[]>(getStoredResponses);
   const [sheetsConfig, setSheetsConfig] = useState<GoogleSheetsConfig>(getStoredSheetsConfig);
+  const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(getStoredSupabaseConfig);
   const [selectedStudent, setSelectedStudent] = useState<string>(getStoredCurrentStudent);
   const [currentView, setCurrentView] = useState<AppView>('STUDENT_HOME');
   const [showQrModal, setShowQrModal] = useState(false);
@@ -46,19 +59,31 @@ export default function App() {
   // Active Session Object
   const activeSession = useMemo(() => {
     const found = sessions.find((s) => s.id === activeSessionId);
-    return found || sessions[0] || {
-      id: 'session-default',
-      title: '마음 출석부 수업',
-      date: new Date().toISOString().split('T')[0],
-      roster: [],
-      createdAt: new Date().toISOString(),
-    };
+    return (
+      found ||
+      sessions[0] || {
+        id: 'session-default',
+        title: '마음 출석부 수업',
+        date: new Date().toISOString().split('T')[0],
+        roster: [],
+        createdAt: new Date().toISOString(),
+      }
+    );
   }, [sessions, activeSessionId]);
 
   // Persist handlers
   const handleUpdateSessions = (newSessions: SessionInfo[]) => {
     setSessions(newSessions);
     saveStoredSessions(newSessions);
+
+    // Sync to Supabase if configured
+    if (isSupabaseConfigured(supabaseConfig)) {
+      newSessions.forEach((s) => {
+        upsertSessionToSupabase(s).catch((err) =>
+          console.warn('[Supabase] Failed to sync session:', err)
+        );
+      });
+    }
   };
 
   const handleSelectSession = (id: string) => {
@@ -81,10 +106,95 @@ export default function App() {
     saveStoredSheetsConfig(newConfig);
   };
 
+  const handleUpdateSupabaseConfig = (newConfig: SupabaseConfig) => {
+    setSupabaseConfig(newConfig);
+    saveStoredSupabaseConfig(newConfig);
+  };
+
   const handleSelectStudent = (name: string) => {
     setSelectedStudent(name);
     setStoredCurrentStudent(name);
   };
+
+  // Full Cloud Sync Trigger
+  const handleTriggerSupabaseSync = useCallback(async () => {
+    if (!isSupabaseConfigured(supabaseConfig)) return;
+
+    try {
+      // 1. Fetch remote sessions
+      const remoteSessions = await fetchSupabaseSessions();
+      if (remoteSessions && remoteSessions.length > 0) {
+        setSessions((prev) => {
+          const map = new Map<string, SessionInfo>();
+          prev.forEach((s) => map.set(s.id, s));
+          remoteSessions.forEach((s) => map.set(s.id, s));
+          const merged = Array.from(map.values());
+          saveStoredSessions(merged);
+          return merged;
+        });
+      } else if (sessions.length > 0) {
+        // Seed remote with local sessions if remote is empty
+        sessions.forEach((s) => upsertSessionToSupabase(s));
+      }
+
+      // 2. Fetch remote responses
+      const remoteResponses = await fetchSupabaseResponses();
+      if (remoteResponses && remoteResponses.length > 0) {
+        setResponses((prev) => {
+          const map = new Map<string, EmotionResponse>();
+          prev.forEach((r) => map.set(r.id, r));
+          remoteResponses.forEach((r) => map.set(r.id, r));
+          const merged = Array.from(map.values()).sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          saveStoredResponses(merged);
+          return merged;
+        });
+      } else if (responses.length > 0) {
+        // Seed remote with local responses if remote is empty
+        batchSyncResponsesToSupabase(responses);
+      }
+    } catch (err) {
+      console.warn('[Supabase Sync Trigger] Error:', err);
+    }
+  }, [supabaseConfig, sessions, responses]);
+
+  // Realtime subscription and initial load from Supabase
+  useEffect(() => {
+    if (!isSupabaseConfigured(supabaseConfig)) return;
+
+    // Initial fetch from cloud
+    handleTriggerSupabaseSync();
+
+    // Setup realtime subscription
+    const unsubscribe = subscribeToSupabaseRealtime(
+      (incomingResponse) => {
+        setResponses((prev) => {
+          // Replace or prepend
+          const exists = prev.some((r) => r.id === incomingResponse.id);
+          const next = exists
+            ? prev.map((r) => (r.id === incomingResponse.id ? incomingResponse : r))
+            : [incomingResponse, ...prev];
+          saveStoredResponses(next);
+          return next;
+        });
+      },
+      (incomingSession) => {
+        setSessions((prev) => {
+          const exists = prev.some((s) => s.id === incomingSession.id);
+          const next = exists
+            ? prev.map((s) => (s.id === incomingSession.id ? incomingSession : s))
+            : [...prev, incomingSession];
+          saveStoredSessions(next);
+          return next;
+        });
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [supabaseConfig.url, supabaseConfig.anonKey]);
 
   // Submit Step 1 (Before)
   const handleSubmitBefore = async (data: {
@@ -98,7 +208,7 @@ export default function App() {
     const dateStr = activeSession.date || now.toISOString().split('T')[0];
 
     const newResponse: EmotionResponse = {
-      id: `resp-${Date.now()}`,
+      id: `resp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       sessionId: activeSession.id,
       sessionTitle: activeSession.title,
       date: dateStr,
@@ -125,6 +235,14 @@ export default function App() {
     const updated = [newResponse, ...otherResponses];
     handleUpdateResponses(updated);
 
+    // Push to Supabase Cloud if configured
+    if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
+      upsertSessionToSupabase(activeSession).catch(() => {});
+      pushResponseToSupabase(newResponse).catch((err) =>
+        console.warn('[Supabase Sync Error]', err)
+      );
+    }
+
     // Sync to Google Sheets if configured
     if (sheetsConfig.autoSync && sheetsConfig.webhookUrl) {
       syncResponseToGoogleSheets(newResponse, sheetsConfig);
@@ -143,7 +261,7 @@ export default function App() {
     const dateStr = activeSession.date || now.toISOString().split('T')[0];
 
     const newResponse: EmotionResponse = {
-      id: `resp-${Date.now()}`,
+      id: `resp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       sessionId: activeSession.id,
       sessionTitle: activeSession.title,
       date: dateStr,
@@ -169,6 +287,14 @@ export default function App() {
 
     const updated = [newResponse, ...otherResponses];
     handleUpdateResponses(updated);
+
+    // Push to Supabase Cloud if configured
+    if (isSupabaseConfigured(supabaseConfig) && supabaseConfig.autoSync) {
+      upsertSessionToSupabase(activeSession).catch(() => {});
+      pushResponseToSupabase(newResponse).catch((err) =>
+        console.warn('[Supabase Sync Error]', err)
+      );
+    }
 
     // Sync to Google Sheets if configured
     if (sheetsConfig.autoSync && sheetsConfig.webhookUrl) {
@@ -273,7 +399,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Training Organizer Settings Modal */}
+      {/* Training Organizer Settings Modal with Supabase & Google Sheets */}
       <TrainingSettingsModal
         isOpen={showSettingsModal}
         onClose={() => setShowSettingsModal(false)}
@@ -283,7 +409,10 @@ export default function App() {
         onUpdateSessions={handleUpdateSessions}
         sheetsConfig={sheetsConfig}
         onUpdateSheetsConfig={handleUpdateSheetsConfig}
+        supabaseConfig={supabaseConfig}
+        onUpdateSupabaseConfig={handleUpdateSupabaseConfig}
         responses={responses}
+        onTriggerSupabaseSync={handleTriggerSupabaseSync}
       />
 
       {/* Quick Share & QR Code Modal */}
