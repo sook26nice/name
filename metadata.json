@@ -1,0 +1,6 @@
+{
+  "name": "마음 출석부 (Before & After)",
+  "description": "수업 전 기분과 기대감, 수업 후의 변화된 감정과 소감을 기록하고 교육 효과를 실시간으로 분석하는 모바일 최적화 마음 출석부",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
